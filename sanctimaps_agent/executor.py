@@ -211,6 +211,21 @@ class ShotExecutor:
         if act == "open_apparition":
             return await resilient(act, [lambda: self.app.select_apparition(p.get("name"))], self.max_attempts)
 
+        if act == "level_up":
+            return await resilient(act, [a.level_up], self.max_attempts)
+        if act == "miracles_on":
+            return await resilient(act, [lambda: a.set_corpus("miracles")], self.max_attempts)
+        if act in ("show_lieux", "show_croises"):
+            return await resilient(act, [lambda: a.fiche_button(act.split("_")[1])], 1)
+        if act == "search_list":
+            return await resilient(act, [lambda: a.search_list(p.get("query", ""))], self.max_attempts)
+        if act == "close_panel":
+            await a.close_sidebar()
+            return ActionReport(act, True)
+        if act == "frame_view":
+            return await resilient(act, [lambda: a.frame_view(float(p["x"]), float(p["y"]), float(p.get("ratio") or 1),
+                                                              p.get("country"))], self.max_attempts)
+
         if act == "hold":
             return ActionReport("hold", True)
 

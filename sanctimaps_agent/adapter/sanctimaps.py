@@ -442,7 +442,8 @@ class SanctiMapsAdapter:
         fournie du site (« saint Louis » : le roi plutôt qu'un homonyme obscur)."""
         scored = [(self.score_result(query, r), r) for r in results]
         top = max(s for s, _ in scored)
-        tied = [r for s, r in scored if s >= top - 1e-6]
+        # Un mot de plus (« de Lisieux ») ne doit pas suffire à écarter le saint le plus connu.
+        tied = [r for s, r in scored if s >= top - 2]
         if len(tied) == 1:
             return tied[0]
         fame = await self.corpus.fame_by_name()
@@ -690,6 +691,50 @@ class SanctiMapsAdapter:
         self.memory.record(f"corpus:{corpus}")
         legend = await self.page.evaluate("() => (document.querySelector('.legend') || {}).textContent || ''")
         return ActionReport(f"corpus:{corpus}", ok, legend.strip()[:120])
+
+    # ------------------------------------------------------ autres actions
+
+    async def level_up(self) -> ActionReport:
+        """Remonte d'un niveau par le fil d'Ariane : pays → continent → monde."""
+        snap = await self.state()
+        if snap.raw.get("ficheOpen"):
+            await self.close_profile()
+            snap = await self.state()
+        if snap.mode == "world":
+            return ActionReport("level_up", True, "déjà au monde")
+        crumb = self.page.locator(".trail .crumb").nth(1 if snap.mode == "country" else 0)
+        await self.map.site_transition(lambda: crumb.click())
+        snap = await self.state()
+        self._forget_below("continent" if snap.mode == "continent" else "world")
+        return ActionReport("level_up", True, " › ".join(snap.trail))
+
+    async def fiche_button(self, kind: str) -> ActionReport:
+        """« Voir les lieux qu'il a marqués » / « les saints qu'il a pu croiser »."""
+        await self.sync.wait_until_panel_open()
+        sel = ".detail__lieux-btn" if kind == "lieux" else ".detail__croises-btn"
+        btn = self.page.locator(sel)
+        if not await btn.count():
+            return ActionReport(f"show_{kind}", False, "la fiche n'en indique pas")
+        if "is-on" not in (await btn.get_attribute("class") or ""):
+            await self.map.site_transition(lambda: btn.click())
+        on = await self.page.locator(f"{sel}.is-on").count() > 0
+        return ActionReport(f"show_{kind}", on, (await btn.text_content() or "").strip())
+
+    async def search_list(self, query: str) -> ActionReport:
+        results = await self.search(query, scope="saints")
+        summary = await self.page.evaluate("() => (document.querySelector('.search .results__summary') || {}).textContent || ''")
+        return ActionReport("search_list", bool(results), f"« {query} » : {summary}", {"results": results[:20]})
+
+    async def frame_view(self, x: float, y: float, ratio: float, country: str | None) -> ActionReport:
+        """Retrouve un cadrage montré à la main dans le studio."""
+        if (await self.state()).raw.get("ficheOpen"):
+            await self.close_profile()
+        if country and (self.memory.selected_country != country or (await self.state()).mode != "country"):
+            rep = await self.go_to_country(country)
+            if not rep.ok:
+                return rep
+        move = await self.map.zoom_to_projected(x, y, ratio or 1.0)
+        return ActionReport("frame_view", True, f"×{ratio or 1:.1f} {move.note}".strip())
 
     # ------------------------------------------------- secours par la vision
 

@@ -17,6 +17,7 @@ const ui = {
   recHint: $('#rec-hint'), total: $('#total'), capture: $('#capture'), progress: $('#progress'),
   progressFill: $('#progress-fill'), progressText: $('#progress-text'), cmdResult: $('#cmd-result'),
   background: $('#background'), bgResult: $('#bg-result'), addPause: $('#add-pause'), clear: $('#clear'),
+  demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
 };
 
 const clock = new Clock();
@@ -46,6 +47,7 @@ function layout() {
 addEventListener('resize', layout);
 
 async function loadStage() {
+  if (demo.on) toggleDemo(false);
   overlay('Chargement de SanctiMaps…');
   ui.stage.replaceChildren();
   iframe = document.createElement('iframe');
@@ -134,7 +136,7 @@ function addShots(shots) {
     if (!scenario.shots.length && shot.action === 'back_to_world') shot.action = 'establish_world';
     const natural = Planner.natural(shot.action, style, false) ?? 2;
     scenario.shots.push({ id: '', action: shot.action, params: shot.params || {},
-      duration: +(natural / (scenario.speed || 1) + (shot.action === 'show_profile' ? 2 : 1)).toFixed(1),
+      duration: shot.duration || +(natural / (scenario.speed || 1) + (shot.action === 'show_profile' ? 2 : 1)).toFixed(1),
       label: new Planner(data, sm?.memory).describe({ action: shot.action, params: shot.params || {} }) });
   }
   renumber(); renderTimeline();
@@ -317,30 +319,45 @@ async function playOnly() {
 /**
  * Une commande de pilotage : exécutée sur la carte, elle rend aussi les plans
  * équivalents, qu'on peut ajouter au scénario une fois l'essai réussi.
+ * Les motifs vont du plus précis au plus général.
  */
 async function command(text) {
   const t = fold(text.replace('’', "'"));
   const clean = text.trim().replace(/[.!?]$/, '');
   let m;
   const done = (report, shots = []) => ({ report, shots });
-  if (/\b(vue (du )?monde|planisphere|reviens? au monde|^monde$)\b/.test(t)) return done(await sm.goWorld(), [{ action: 'back_to_world' }]);
-  if (/\b(mode apparitions?|passe (en|aux) apparitions?|^apparitions?$)\b/.test(t)) return done(await sm.setCorpus('apparitions'), [{ action: 'apparitions_on' }]);
-  if (/\b(mode saints|reviens? aux saints)\b/.test(t)) return done(await sm.setCorpus('saints'), [{ action: 'apparitions_off' }]);
-  if (/\bsiecle\b/.test(t)) {
-    const c = parseCentury(text);
-    if (c) return done(await sm.century(c, sm.memory.country), [{ action: 'century_filter', params: { century: c, country: sm.memory.country } }]);
+  const run = async (shot) => done(await director.run({ params: {}, ...shot }), [shot]);
+
+  // Pauses et niveaux
+  if ((m = /\bpause(?: de)?\s*(\d+(?:[.,]\d+)?)?/.exec(t))) {
+    const seconds = m[1] ? parseFloat(m[1].replace(',', '.')) : null;
+    await clock.wait((seconds || 2) * 1000);
+    return done({ ok: true, toString: () => `✓ pause${seconds ? ` de ${seconds} s` : ''}` }, [{ action: 'hold', params: seconds ? { seconds } : {}, duration: seconds }]);
   }
-  if (/\bcalendrier|saint du jour|fetes?\b/.test(t)) {
-    m = /\b(\d{1,2}(?:er)?\s+\w+)/.exec(t);
-    const day = /demain/.test(t) ? 'demain' : m ? m[1] : "aujourd'hui";
-    return done(await sm.feastDay(day), [{ action: 'calendar', params: { day } }]);
+  if (/\b(remonte|niveau (au )?dessus|recule d un niveau|un niveau plus haut|retour arriere|reviens en arriere)\b/.test(t)) return run({ action: 'level_up' });
+  if (/\b(vue (du )?monde|planisphere|reviens? au monde|monde entier|^monde$)\b/.test(t)) return done(await sm.goWorld(), [{ action: 'back_to_world' }]);
+  if (/\b(vue d ?ensemble|recadre|tout le pays|vue (du|de la|de l) pays|cadrage d origine)\b/.test(t)) return run({ action: 'fit_country', params: { country: sm.memory.country } });
+
+  // Corpus
+  if (/\bmiracles?\b/.test(t)) return run({ action: 'miracles_on' });
+  if ((m = /\bapparitions? (?:en|au|aux|de|du|d) (.+)$/.exec(fold(clean))) && data.findCountry(m[1])) {
+    const iso = data.findCountry(m[1]);
+    const r1 = await sm.setCorpus('apparitions'); if (!r1.ok) return done(r1);
+    return done(await sm.goCountry(iso), [{ action: 'apparitions_on' }, { action: 'open_country', params: { country: iso } }]);
   }
-  if ((m = /(?:cherche|trouve|recherche)\s+(.+)$/i.exec(clean))) {
-    const r = await sm.searchSaint(m[1]);
-    return done(r, [{ action: 'open_saint', params: { query: sm.memory.saint || m[1] } }]);
-  }
+  if (/\b(mode apparitions?|passe (en|aux) apparitions?|^apparitions?$|montre les apparitions)\b/.test(t)) return run({ action: 'apparitions_on' });
+  if (/\b(mode saints|reviens? aux saints|^saints$)\b/.test(t)) return run({ action: 'apparitions_off' });
+
+  // Ce que montre la fiche
+  if (/\blieux\b/.test(t) && !/\bsaints? nes?\b/.test(t)) return run({ action: 'show_lieux' });
+  if (/\b(crois(e|es|er|ee|ees)?|voisins|contemporains|rencontr\w*)\b/.test(t)) return run({ action: 'show_croises' });
   if (/\b(ferme|referme)\b.*\bfiche\b/.test(t)) return done(await sm.closeProfile(), [{ action: 'close_profile' }]);
-  if (/\b(sa|la|cette) fiche\b|lis la fiche/.test(t)) {
+  if (/\b(ferme|referme)\b.*\bpanneau\b/.test(t)) return run({ action: 'close_panel' });
+  if (/\b(croix|saint|repere) (la plus proche|le plus proche|au hasard|ici|du centre)\b|\bouvre une croix\b/.test(t)) {
+    const r = await sm.openNearestMarker();
+    return done(r, [{ action: 'open_saint', params: { query: sm.memory.saint } }]);
+  }
+  if (/\b(sa|la|cette) fiche\b|\blis la fiche\b|\bfais defiler\b/.test(t)) {
     const shots = [];
     if (!sm.snapshot().ficheOpen) {
       const r = sm.memory.saint ? await sm.openSaint(sm.memory.saint) : await sm.openNearestMarker();
@@ -350,17 +367,43 @@ async function command(text) {
     shots.push({ action: 'show_profile' });
     return done(await sm.showProfile(), shots);
   }
-  if (/\bzoom(e|er)? arriere|dezoom|recule\b/.test(t)) return done(await director.run({ action: 'zoom_out', params: { factor: 2 } }), [{ action: 'zoom_out', params: { factor: 2 } }]);
+
+  // Siècles, dates, recherche
+  if (/\bsiecle\b/.test(t)) {
+    const c = parseCentury(text);
+    const iso = data.countriesIn(text)[0] || sm.memory.country;
+    if (c) return done(await sm.century(c, iso), [{ action: 'century_filter', params: { century: c, country: iso } }]);
+  }
+  if (/\bcalendrier|saint du jour|fetes?\b/.test(t)) {
+    m = /\b(\d{1,2}(?:er)?\s+\w+)/.exec(t);
+    const day = /demain/.test(t) ? 'demain' : /hier/.test(t) ? 'hier' : m ? m[1] : "aujourd'hui";
+    return done(await sm.feastDay(day), [{ action: 'calendar', params: { day } }]);
+  }
+  if ((m = /\bsaints? nes? (?:a|en|au|aux|dans) (?:la |le |les |l )?(.+)$/i.exec(fold(clean)))) {
+    const q = clean.slice(clean.length - m[1].length);
+    return run({ action: 'search_list', params: { query: q } });
+  }
+  if ((m = /(?:cherche|trouve|recherche)\s+(.+)$/i.exec(clean))) {
+    const r = await sm.searchSaint(m[1]);
+    return done(r, [{ action: 'open_saint', params: { query: sm.memory.saint || m[1] } }]);
+  }
+
+  // Caméra
+  const strong = /\b(beaucoup|fort|bien plus|encore plus)\b/.test(t) ? 3 : 2;
+  if (/\bzoom(e|er)? arriere|dezoom|recule\b|plus loin/.test(t)) return run({ action: 'zoom_out', params: { factor: strong } });
   if ((m = /(?:zoome?r?\s+(?:sur|vers))\s+(?:la |le |les |l')?(.+)$/i.exec(clean))) {
-    const r = await sm.goPlace(m[1]);
-    return done(r, [{ action: 'zoom_to_place', params: { place: r.data?.name || m[1], country: r.data?.iso } }]);
+    const target = m[1]; const cid = data.continentId(target); const iso = data.findCountry(target);
+    if (cid) return done(await sm.goContinent(cid), [{ action: 'open_continent', params: { continent: cid } }]);
+    if (iso && !(await sm.locatePlace(target))?.kind?.startsWith('ville')) return done(await sm.goCountry(iso), [{ action: 'open_country', params: { country: iso } }]);
+    const r = await sm.goPlace(target);
+    return done(r, [{ action: 'zoom_to_place', params: { place: r.data?.name || target, country: r.data?.iso } }]);
   }
-  if (/\bzoom(e|er)?\b|rapproche/.test(t)) return done(await director.run({ action: 'zoom_in', params: { factor: 2 } }), [{ action: 'zoom_in', params: { factor: 2 } }]);
-  if ((m = /\b(nord|sud|est|ouest)\b$/.exec(t))) {
+  if (/\bzoom(e|er)?\b|rapproche|plus pres/.test(t)) return run({ action: 'zoom_in', params: { factor: strong } });
+  if ((m = /\b(nord|sud|est|ouest)\b/.exec(t)) && /\b(va|vers|deplace|glisse|regarde|au|a l')\b/.test(t)) {
     const direction = { nord: 'north', sud: 'south', est: 'east', ouest: 'west' }[m[1]];
-    return done(await director.run({ action: 'pan', params: { direction } }), [{ action: 'pan', params: { direction } }]);
+    return run({ action: 'pan', params: { direction, fraction: strong === 3 ? 0.5 : 0.3 } });
   }
-  if ((m = /(?:va|aller|allons|direction|montre(?:-moi)? les saints)\s+(?:en|au|aux|a|à|dans|vers|de|du|d'|des)?\s*(?:la |le |les |l')?(.+)$/i.exec(clean))) {
+  if ((m = /(?:va|aller|allons|direction|montre(?:-moi)? les saints|emmene[- ]moi|passe)\s+(?:en|au|aux|a|à|dans|vers|de|du|d'|des|par)?\s*(?:la |le |les |l')?(.+)$/i.exec(clean))) {
     const target = m[1];
     const cid = data.continentId(target);
     if (cid) return done(await sm.goContinent(cid), [{ action: 'open_continent', params: { continent: cid } }]);
@@ -369,7 +412,10 @@ async function command(text) {
     const r = await sm.goPlace(target);
     return done(r, [{ action: 'zoom_to_place', params: { place: r.data?.name || target, country: r.data?.iso } }]);
   }
-  return done({ ok: false, toString: () => `✗ commande non comprise : « ${text} »` });
+  // Un nom seul : continent, pays ou lieu.
+  if (data.continentId(clean)) return done(await sm.goContinent(data.continentId(clean)), [{ action: 'open_continent', params: { continent: data.continentId(clean) } }]);
+  if (data.findCountry(clean)) { const iso = data.findCountry(clean); return done(await sm.goCountry(iso), [{ action: 'open_country', params: { country: iso } }]); }
+  return done({ ok: false, toString: () => `✗ commande non comprise : « ${text} ». Voir « Toutes les commandes ».` });
 }
 
 async function runCommand(text) {
@@ -385,11 +431,124 @@ async function runCommand(text) {
     if (report.ok && shots.length) {
       const add = document.createElement('button'); add.className = 'primary';
       add.textContent = `＋ Ajouter au scénario${shots.length > 1 ? ` (${shots.length} plans)` : ''}`;
-      add.addEventListener('click', () => { addShots(shots.map((s) => ({ ...s, params: { ...(s.params || {}) } }))); add.disabled = true; add.textContent = '✓ Ajouté au scénario'; });
+      add.addEventListener('click', () => { addShots(shots.map((sh) => ({ ...sh, params: { ...(sh.params || {}) } }))); add.disabled = true; add.textContent = '✓ Ajouté au scénario'; });
       ui.cmdResult.append(add);
     }
   } catch (e) { log(`> ${text}\n✗ ${e.message}`); ui.cmdResult.textContent = `✗ ${e.message}`; }
-  finally { setBusy(false); }
+  finally { setBusy(false); if (demo.on) { demo.committed = demoState(); demo.last = demo.committed; } }
+}
+
+// ------------------------------------------------ démonstration à la main
+
+/**
+ * « Montrer à la main » : on agit soi-même sur la carte (toucher un pays,
+ * zoomer, ouvrir une croix, basculer en apparitions…). Le studio observe la page,
+ * attend que la carte se pose après chaque geste, et traduit ce qui a changé en
+ * commandes — qu'on ajoute au scénario d'un toucher.
+ */
+const demo = { on: false, committed: null, pending: [], last: null, stable: 0, pointer: false, timer: null };
+
+function demoState() {
+  const s = sm.snapshot();
+  const q = (sel) => sm.q(sel);
+  const daily = q('#panel.is-open .daily') ? (q('.daily__date')?.textContent || '').trim() : null;
+  const century = q('#panel.is-open .search .chip--century')?.textContent.replace('×', '').trim() || null;
+  return {
+    mode: s.mode, trail: s.trail.join('›'), continent: s.trail[1] || null, country: s.trail[2] || null,
+    corpus: s.corpus, fiche: s.ficheOpen ? s.ficheName : null, transform: s.transform,
+    lieux: !!q('.detail__lieux-btn.is-on'), croises: !!q('.detail__croises-btn.is-on'), daily, century,
+    pending: s.pending,
+  };
+}
+
+async function demoDiff(a, b) {
+  const shots = [];
+  if (a.corpus !== b.corpus) shots.push({ action: b.corpus === 'apparitions' ? 'apparitions_on' : b.corpus === 'miracles' ? 'miracles_on' : 'apparitions_off' });
+  if (a.trail !== b.trail) {
+    if (b.mode === 'world') shots.push({ action: 'back_to_world' });
+    else if (b.mode === 'continent') shots.push({ action: a.mode === 'country' ? 'level_up' : 'open_continent', params: { continent: data.continentId(b.continent) } });
+    else if (b.mode === 'country') shots.push({ action: 'open_country', params: { country: data.findCountry(b.country) } });
+    sm.baseK = b.transform?.[0] || sm.baseK;
+  }
+  if (a.fiche !== b.fiche) {
+    if (b.fiche) shots.push({ action: 'open_saint', params: { query: b.fiche } }, { action: 'show_profile' });
+    else if (a.fiche) shots.push({ action: 'close_profile' });
+  }
+  if (b.lieux && !a.lieux) shots.push({ action: 'show_lieux' });
+  if (b.croises && !a.croises) shots.push({ action: 'show_croises' });
+  if (b.century && b.century !== a.century) {
+    const n = parseInt(b.century, 10);
+    if (n) shots.push({ action: 'century_filter', params: { century: n, country: data.findCountry(b.country || '') || null } });
+  }
+  if (b.daily && b.daily !== a.daily) {
+    const m = /(\d{1,2})(?:er)?\s+(\p{L}+)/u.exec(b.daily);
+    if (m) shots.push({ action: 'calendar', params: { day: `${m[1]} ${m[2]}` } });
+  }
+  // Un zoom ou un déplacement à la main, au même niveau et sans autre changement.
+  if (!shots.length && a.mode === b.mode && b.mode !== 'world' && a.transform && b.transform) {
+    const zoom = Math.abs(Math.log(b.transform[0] / a.transform[0]));
+    const g = sm.geometry();
+    const moved = Math.hypot(b.transform[1] - a.transform[1], b.transform[2] - a.transform[2]) / Math.max(g.width, g.height);
+    if (zoom > 0.15 || moved > 0.08) {
+      const v = sm.view(); const iso = data.findCountry(b.country || '') || null;
+      const near = await sm.nearestPlace(v.x, v.y, iso);
+      shots.push({ action: 'frame_view', params: { x: Math.round(v.x), y: Math.round(v.y), ratio: +v.ratio.toFixed(2), country: iso, near } });
+    }
+  }
+  return shots;
+}
+
+async function demoTick() {
+  if (!demo.on || busy || !sm) return;
+  const now = demoState();
+  const same = demo.last && JSON.stringify(now.transform) === JSON.stringify(demo.last.transform) && now.trail === demo.last.trail && now.fiche === demo.last.fiche;
+  demo.stable = same && !now.pending && !demo.pointer ? demo.stable + 1 : 0;
+  demo.last = now;
+  if (demo.stable < 3) return;          // ≈ 0,75 s d'immobilité
+  const shots = await demoDiff(demo.committed, now);
+  demo.committed = now;
+  if (!shots.length) return;
+  for (const shot of shots) { shot.params ||= {}; demo.pending.push(shot); }
+  renderDemo();
+}
+
+function renderDemo() {
+  ui.demoList.replaceChildren();
+  const planner = new Planner(data, sm?.memory);
+  demo.pending.forEach((shot, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = '<span></span><button class="mini">＋ Ajouter</button><button class="mini del" aria-label="Ignorer">✕</button>';
+    li.querySelector('span').textContent = planner.describe(shot);
+    const [add, drop] = li.querySelectorAll('button');
+    add.addEventListener('click', () => { addShots([shot]); demo.pending.splice(i, 1); renderDemo(); });
+    drop.addEventListener('click', () => { demo.pending.splice(i, 1); renderDemo(); });
+    ui.demoList.append(li);
+  });
+  ui.demoAll.hidden = demo.pending.length < 2;
+  ui.demoEmpty.hidden = demo.pending.length > 0 || !demo.on;
+}
+
+function toggleDemo(on = !demo.on) {
+  demo.on = on;
+  ui.demo.textContent = on ? '■ Arrêter la démonstration' : '✋ Montrer à la main';
+  ui.demo.classList.toggle('primary', on);
+  ui.wrap.classList.toggle('is-demo', on);
+  if (on) {
+    demo.committed = demoState(); demo.last = demo.committed; demo.stable = 0;
+    const D = iframe.contentDocument;
+    if (!D.__smDemo) {
+      D.__smDemo = true;
+      D.addEventListener('pointerdown', (e) => { if (e.isTrusted) demo.pointer = true; }, true);
+      for (const type of ['pointerup', 'pointercancel']) D.addEventListener(type, (e) => { if (e.isTrusted) demo.pointer = false; }, true);
+    }
+    demo.timer = setInterval(() => demoTick().catch((e) => log(`Démonstration : ${e.message}`)), 250);
+    // Sur un téléphone, la carte est au-dessus des commandes : on la ramène sous le doigt.
+    ui.wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    log('Démonstration : agissez sur la carte, chaque action reconnue apparaît dans la liste.');
+  } else {
+    clearInterval(demo.timer);
+  }
+  renderDemo();
 }
 
 // ------------------------------------------------- rendu en arrière-plan
@@ -461,6 +620,8 @@ ui.stop.addEventListener('click', () => director?.stop());
 ui.aspect.addEventListener('change', async () => { if (!busy) { setBusy(true); try { await loadStage(); if (scenario) scenario.aspect = ui.aspect.value; renderTimeline(); } finally { setBusy(false); } } });
 ui.style.addEventListener('change', () => { if (scenario) { scenario.style = ui.style.value; renderTimeline(); } else save(); });
 ui.background.addEventListener('click', renderInBackground);
+ui.demo.addEventListener('click', () => { if (sm) toggleDemo(); });
+ui.demoAll.addEventListener('click', () => { addShots(demo.pending.splice(0)); renderDemo(); });
 ui.addPause.addEventListener('click', () => addShots([{ action: 'hold' }]));
 ui.clear.addEventListener('click', () => { if (!busy && confirm('Vider le scénario ?')) { scenario = null; renderTimeline(); } });
 ui.request.addEventListener('input', save);

@@ -14,6 +14,15 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
 * **Scénario modifiable** : durée, ordre (↑ ↓) et suppression (✕) de chaque plan ; chaque
   commande testée dans « Piloter la carte » peut être ajoutée au scénario. Le scénario est
   conservé sur l'appareil.
+* **« Montrer à la main »** : on agit soi-même sur la carte (toucher un continent ou un pays,
+  zoomer, déplacer, ouvrir une croix, fermer une fiche, basculer en apparitions…) ; le studio
+  reconnaît chaque action une fois la carte posée et la propose comme commande à ajouter.
+  Un zoom ou un déplacement fait à la main devient un « cadrage » exact, rejoué tel quel.
+* **Commandes** (« Toutes les commandes » dans le studio) : continents, pays, villes, points
+  cardinaux, zoom avant/fort/arrière, vue du pays, remonter d'un niveau, monde ; recherche d'un
+  saint, croix la plus proche, lecture de la fiche, lieux marqués, saints croisés ; siècles
+  (avec pays), saints nés à…, fêtes (aujourd'hui, demain, une date) ; apparitions (dans un
+  pays), miracles, saints ; pauses.
 * **« Enregistrer sur cet appareil »** — iPhone, iPad et ordinateur : la vidéo est fabriquée
   image par image sur l'appareil (30 images/s exactes, 1080p, H.264), puis proposée au
   téléchargement ou, sur iPhone, à « Enregistrer la vidéo » dans Photos. Le rendu prend

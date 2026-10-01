@@ -73,19 +73,60 @@
       <h2>Piloter la carte</h2>
       <div class="cmd"><input type="text" id="cmd" placeholder="Va en France · Zoome sur Paris · Cherche saint Louis" aria-label="Commande"><button id="cmd-go">Tester</button></div>
       <div class="cmd-result" id="cmd-result"></div>
-      <div class="chips">
-        <button data-cmd="Va en France">Va en France</button>
-        <button data-cmd="Zoome sur Paris">Zoome sur Paris</button>
-        <button data-cmd="Cherche saint Louis">Cherche saint Louis</button>
-        <button data-cmd="Ouvre sa fiche">Ouvre sa fiche</button>
-        <button data-cmd="Fais un zoom arrière">Zoom arrière</button>
-        <button data-cmd="Montre-moi les saints du XIIe siècle">XIIe siècle</button>
-        <button data-cmd="Montre les saints fêtés aujourd'hui">Fêtés aujourd'hui</button>
-        <button data-cmd="Passe en mode apparitions">Apparitions</button>
-        <button data-cmd="Reviens au monde">Monde</button>
-        <button data-cmd="Va vers l'est">Vers l'est</button>
-        <button data-cmd="Ferme la fiche">Ferme la fiche</button>
+      <div class="row">
+        <button id="demo">✋ Montrer à la main</button>
       </div>
+      <p class="hint">Touchez « Montrer à la main », puis agissez vous-même sur la carte : toucher un continent ou un pays, zoomer, déplacer, ouvrir une croix, basculer en apparitions… Chaque action reconnue s'affiche ci-dessous.</p>
+      <p class="hint" id="demo-empty" hidden>En attente d'une action sur la carte…</p>
+      <ul class="demo-list" id="demo-list"></ul>
+      <button id="demo-all" class="primary" hidden>＋ Tout ajouter au scénario</button>
+
+      <details class="catalogue">
+        <summary>Toutes les commandes</summary>
+        <h3>Se déplacer</h3>
+        <div class="chips">
+          <button data-cmd="Va en Europe">Va en Europe</button>
+          <button data-cmd="Va en France">Va en France</button>
+          <button data-cmd="Zoome sur Paris">Zoome sur Paris</button>
+          <button data-cmd="Va à Rome">Va à Rome</button>
+          <button data-cmd="Va vers l'est">Vers l'est</button>
+          <button data-cmd="Va vers le nord">Vers le nord</button>
+          <button data-cmd="Zoome davantage">Zoom avant</button>
+          <button data-cmd="Zoome beaucoup">Zoom fort</button>
+          <button data-cmd="Fais un zoom arrière">Zoom arrière</button>
+          <button data-cmd="Vue d'ensemble du pays">Vue du pays</button>
+          <button data-cmd="Remonte d'un niveau">Remonter d'un niveau</button>
+          <button data-cmd="Reviens au monde">Monde</button>
+        </div>
+        <h3>Saints et fiches</h3>
+        <div class="chips">
+          <button data-cmd="Cherche saint Louis">Cherche saint Louis</button>
+          <button data-cmd="Cherche Thérèse">Cherche Thérèse</button>
+          <button data-cmd="Ouvre la croix la plus proche">Croix la plus proche</button>
+          <button data-cmd="Ouvre sa fiche">Lire sa fiche</button>
+          <button data-cmd="Montre ses lieux">Ses lieux</button>
+          <button data-cmd="Montre les saints qu'il a pu croiser">Saints croisés</button>
+          <button data-cmd="Ferme la fiche">Ferme la fiche</button>
+        </div>
+        <h3>Listes, siècles, calendrier</h3>
+        <div class="chips">
+          <button data-cmd="Montre-moi les saints du XIIe siècle">XIIe siècle</button>
+          <button data-cmd="Saints d'Italie au XIIIe siècle">Italie, XIIIe s.</button>
+          <button data-cmd="Saints nés à Lyon">Nés à Lyon</button>
+          <button data-cmd="Montre les saints fêtés aujourd'hui">Fêtés aujourd'hui</button>
+          <button data-cmd="Saints fêtés demain">Fêtés demain</button>
+          <button data-cmd="Saints fêtés le 15 août">Fêtés le 15 août</button>
+          <button data-cmd="Ferme le panneau">Ferme le panneau</button>
+        </div>
+        <h3>Apparitions, miracles, rythme</h3>
+        <div class="chips">
+          <button data-cmd="Passe en mode apparitions">Apparitions</button>
+          <button data-cmd="Apparitions en France">Apparitions en France</button>
+          <button data-cmd="Mode miracles">Miracles</button>
+          <button data-cmd="Reviens aux saints">Saints</button>
+          <button data-cmd="Pause de 3 secondes">Pause 3 s</button>
+        </div>
+      </details>
     </div>
   </section>
 

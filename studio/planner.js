@@ -22,6 +22,9 @@ export const ACTIONS = {
   show_profile: 'Lecture de la fiche', close_profile: 'Fermeture de la fiche', century_filter: 'Filtre par siècle',
   calendar: 'Calendrier des fêtes', apparitions_on: 'Mode apparitions', apparitions_off: 'Retour aux saints',
   open_apparition: "Fiche d'une apparition", hold: 'Pause', pan: 'Déplacement',
+  level_up: 'Remonter d\'un niveau', miracles_on: 'Mode miracles', show_lieux: 'Lieux marqués par le saint',
+  show_croises: 'Saints qu\'il a pu croiser', open_marker: 'Ouverture d\'une croix de la carte', search_list: 'Recherche',
+  close_panel: 'Fermeture du panneau', frame_view: 'Cadrage montré à la main',
 };
 
 const ROMAN = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10, xi: 11, xii: 12, xiii: 13, xiv: 14,
@@ -159,7 +162,9 @@ export class Planner {
       zoom_to_place: 1.6 + 2.6 * s.zoom + s.settle, pan_to_place: 2 + s.settle, zoom_in: s.zoom + s.settle, zoom_out: s.zoom + s.settle,
       fit_country: t + s.settle, back_to_world: t + s.settle, open_saint: 10 / s.typing + t + 1, show_profile: s.hold * 1.5,
       close_profile: 0.6, century_filter: 14 / s.typing + 1.5, calendar: 1.5, apparitions_on: 1, apparitions_off: 1,
-      open_apparition: 8 / s.typing + t + 1, hold: s.hold, pan: 1.5 + s.settle }[action];
+      open_apparition: 8 / s.typing + t + 1, hold: s.hold, pan: 1.5 + s.settle,
+      level_up: t + s.settle, miracles_on: 1, show_lieux: t + s.settle + 1, show_croises: t + s.settle + 1, open_marker: 2.5,
+      search_list: 12 / s.typing + 1.5, close_panel: 0.6, frame_view: 1.6 + 2.6 * s.zoom + s.settle }[action];
   }
 
   describe(it) {
@@ -175,7 +180,10 @@ export class Planner {
       case 'calendar': return `Calendrier : ${p.day}`;
       case 'open_apparition': return `Apparition : ${p.name}`;
       case 'pan': return `Déplacement vers le ${{ north: 'nord', south: 'sud', east: 'est', west: 'ouest' }[p.direction] || p.direction}`;
-      case 'zoom_in': return 'Zoom avant';
+      case 'zoom_in': return p.factor && p.factor !== 2 ? `Zoom avant ×${p.factor}` : 'Zoom avant';
+      case 'search_list': return `Recherche : ${p.query}`;
+      case 'frame_view': return `Cadrage${p.near ? ' sur ' + p.near : ''} (×${(p.ratio || 1).toFixed(1)})`;
+      case 'hold': return p.seconds ? `Pause de ${p.seconds} s` : 'Pause';
       case 'zoom_out': return 'Zoom arrière';
       default: return ACTIONS[it.action];
     }

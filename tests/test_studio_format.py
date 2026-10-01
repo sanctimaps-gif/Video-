@@ -29,3 +29,15 @@ def test_rejects_unknown_action_and_absurd_durations():
         from_studio({"shots": [{"action": "hold", "duration": 9999}]})
     with pytest.raises(ValueError):
         from_studio({"shots": []})
+
+
+def test_new_studio_actions_are_accepted():
+    sc = from_studio({"shots": [
+        {"action": "level_up", "duration": 3}, {"action": "miracles_on", "duration": 1},
+        {"action": "show_lieux", "duration": 4}, {"action": "show_croises", "duration": 4},
+        {"action": "search_list", "params": {"query": "Lyon"}, "duration": 3},
+        {"action": "close_panel", "duration": 1}, {"action": "open_marker", "duration": 3},
+        {"action": "frame_view", "params": {"x": 506524, "y": 344042, "ratio": 3.5, "country": "FRA", "near": "Paris"}, "duration": 5},
+        {"action": "pan", "params": {"direction": "north", "fraction": 0.5}, "duration": 2},
+    ]})
+    assert len(sc.shots) == 9 and sc.shots[7].params["ratio"] == 3.5

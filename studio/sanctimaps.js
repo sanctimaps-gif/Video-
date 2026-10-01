@@ -151,11 +151,11 @@ export class SiteData {
     const iso = [...by.keys()].sort((a, b) => by.get(b).length - by.get(a).length)[0];
     return { iso, saints: by.get(iso) };
   }
-  richness(s, texts) {
+  richness(s, texts, { fame = false } = {}) {
     const bio = texts?.[s.id]?.bio?.fr || '';
     // Le patronage n'est renseigné que pour les saints les plus connus (≈ 5 % des fiches).
     return Math.min(bio.length, 3000) / 100 + (s.patronage ? 8 : 0) + (s.titles?.length || 0)
-      + (s.statut === 'saint' ? 4 : 0) - (s.circa ? 3 : 0);
+      + (s.statut === 'saint' ? 4 : 0) - (s.circa && !fame ? 3 : 0);
   }
   async interesting(iso, place) {
     const texts = await this.texts();
@@ -169,7 +169,7 @@ export class SiteData {
     if (!this._fame) {
       const texts = await this.texts(); const m = new Map();
       for (const s of await this.saints()) {
-        const k = fold(s.name?.fr || s.name); m.set(k, Math.max(m.get(k) || 0, this.richness(s, texts)));
+        const k = fold(s.name?.fr || s.name); m.set(k, Math.max(m.get(k) || 0, this.richness(s, texts, { fame: true })));
       }
       this._fame = m;
     }
@@ -579,7 +579,8 @@ export class SanctiMaps {
   async best(query, results) {
     const scored = results.map((r) => [SanctiMaps.score(query, r), r]);
     const top = Math.max(...scored.map((x) => x[0]));
-    const tied = scored.filter((x) => x[0] >= top - 1e-6).map((x) => x[1]);
+    // Un mot de plus dans le nom (« de Lisieux ») ne doit pas suffire à écarter le saint le plus connu.
+    const tied = scored.filter((x) => x[0] >= top - 2).map((x) => x[1]);
     if (tied.length === 1) return tied[0];
     const fame = await this.data.fame();
     return tied.sort((a, b) => (fame.get(fold(b.name)) || 0) - (fame.get(fold(a.name)) || 0))[0];
@@ -714,6 +715,67 @@ export class SanctiMaps {
     const label = `${target.getDate()} ${MONTHS[target.getMonth()]}`;
     const results = await this.search(label, 'saints');
     return new Report('calendrier', !!this.q('.search .chip--feast'), `${label} — ${results.length} fiche(s)`);
+  }
+
+  // -------------------------------------------------- nouvelles actions
+
+  /** Remonte d'un niveau : pays → continent → monde (fil d'Ariane du site). */
+  async levelUp() {
+    let s = this.snapshot();
+    if (s.ficheOpen) { await this.closeProfile(); s = this.snapshot(); }
+    if (s.mode === 'world') return new Report('niveau', true, 'déjà au monde');
+    const crumbs = this.D.querySelectorAll('.trail .crumb');
+    const target = s.mode === 'country' ? crumbs[1] : crumbs[0];
+    await this.transition(() => target.click());
+    s = this.snapshot();
+    if (s.mode === 'continent') { this.memory.country = null; this.memory.place = null; }
+    if (s.mode === 'world') Object.assign(this.memory, { country: null, continent: null, place: null });
+    return new Report('niveau', true, s.trail.join(' › '));
+  }
+
+  /** Les lieux marqués par le saint ouvert, ou ceux qu'il a pu croiser (boutons de la fiche). */
+  async ficheButton(kind) {
+    await this.waitFiche();
+    const btn = this.q(kind === 'lieux' ? '.detail__lieux-btn' : '.detail__croises-btn');
+    const what = kind === 'lieux' ? 'lieux marqués' : 'saints croisés';
+    if (!btn) return new Report(what, false, `la fiche de ${this.snapshot().ficheName} n'en indique pas`);
+    if (!btn.classList.contains('is-on')) await this.transition(() => btn.click());
+    const on = !!this.q(kind === 'lieux' ? '.detail__lieux-btn.is-on' : '.detail__croises-btn.is-on');
+    return new Report(what, on, btn.textContent.trim());
+  }
+
+  async searchList(query) {
+    const results = await this.search(query, 'saints');
+    const summary = this.q('.search .results__summary')?.textContent || '';
+    return new Report('recherche', results.length > 0, `« ${query} » : ${summary}`, { results });
+  }
+
+  /** Le cadrage actuel, en coordonnées de la carte : centre et rapport à l'échelle d'arrivée. */
+  view() {
+    const g = this.geometry(); const [cx, cy] = this.center();
+    return { x: (cx - g.left - g.x) / g.k, y: (cy - g.top - g.y) / g.k, ratio: this.baseK ? g.k / this.baseK : 1, k: g.k, mode: g.mode };
+  }
+  /** Le nom qui résume un cadrage : la ville la plus peuplée près du centre de l'écran. */
+  async nearestPlace(x, y, iso) {
+    if (!iso) return null;
+    const g = this.geometry(); const radius = (Math.min(g.width, g.height) / g.k) * 0.25;
+    let best = null, score = -1, nearest = null, d = Infinity;
+    for (const c of await this.data.citiesOf(iso)) {
+      const dd = Math.hypot(c.x - x, c.y - y);
+      if (dd < d) { d = dd; nearest = c; }
+      if (dd <= radius && (c.p || 0) > score) { score = c.p || 0; best = c; }
+    }
+    return (best || nearest)?.n || null;
+  }
+  /** Retrouve un cadrage montré à la main : pays, centre, échelle. */
+  async frameView({ x, y, ratio, country }) {
+    if (this.snapshot().ficheOpen) await this.closeProfile();
+    if (country && (this.memory.country !== country || this.snapshot().mode !== 'country')) {
+      const r = await this.goCountry(country);
+      if (!r.ok) return r;
+    }
+    const r = await this.zoomTo(x, y, ratio || 1);
+    return new Report('cadrage', r.ok !== false, `×${(ratio || 1).toFixed(1)}`);
   }
 
   // ------------------------------------------------------------- apparitions

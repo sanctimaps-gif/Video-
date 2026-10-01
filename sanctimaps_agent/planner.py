@@ -285,6 +285,13 @@ class ScenarioPlanner:
             "apparitions_off": 1.0,
             "open_apparition": 8 / style.typing_chars_per_s + t + 1.0,
             "hold": style.hold_s,
+            "level_up": t + style.settle_s,
+            "miracles_on": 1.0,
+            "show_lieux": t + style.settle_s + 1,
+            "show_croises": t + style.settle_s + 1,
+            "search_list": 12 / style.typing_chars_per_s + 1.5,
+            "close_panel": 0.6,
+            "frame_view": 1.6 + 2.6 * style.zoom_s_per_doubling + style.settle_s,
         }[action]
 
     def schedule(self, intents: list[Intent], style_name: str, target_s: float | None) -> tuple[list[Shot], str, list[str]]:

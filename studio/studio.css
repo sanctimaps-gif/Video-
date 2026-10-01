@@ -79,3 +79,12 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .result .actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .result .actions > * { flex: 1 1 140px; }
 .result .actions a button, .result .actions button { width: 100%; }
+.stage-wrap.is-demo { outline: 3px solid var(--accent); outline-offset: -3px; }
+.demo-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.demo-list:empty { display: none; }
+.demo-list li { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-top: 1px solid var(--line); font-size: .88rem; }
+.demo-list li span { flex: 1; }
+#demo-all { width: 100%; margin-top: 8px; }
+.catalogue { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.catalogue summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+.catalogue h3 { font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 12px 0 0; }

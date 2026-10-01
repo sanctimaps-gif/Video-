@@ -71,6 +71,14 @@ export class Director {
         const r = await sm.pan(p.direction || 'east', p.fraction || 0.3);
         return new Report('déplacement', r.ok, r.ok ? '' : 'borné par le site');
       }
+      case 'level_up': return sm.levelUp();
+      case 'miracles_on': return sm.setCorpus('miracles');
+      case 'show_lieux': return sm.ficheButton('lieux');
+      case 'show_croises': return sm.ficheButton('croises');
+      case 'open_marker': return this.attempt('fiche', [() => sm.openNearestMarker()]);
+      case 'search_list': return sm.searchList(p.query);
+      case 'close_panel': await sm.closePanel(); return new Report('panneau', true, 'fermé');
+      case 'frame_view': return sm.frameView(p);
       case 'hold': return new Report('pause', true);
       default: return new Report(shot.action, false, 'action inconnue');
     }

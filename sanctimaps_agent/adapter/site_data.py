@@ -161,7 +161,7 @@ class CorpusData:
             for saint in await self.saints():
                 name = saint.get("name", {})
                 label = fold(name.get("fr") if isinstance(name, dict) else str(name))
-                fame[label] = max(fame.get(label, 0.0), _richness(saint, texts))
+                fame[label] = max(fame.get(label, 0.0), _richness(saint, texts, fame=True))
             self._fame = fame
         return self._fame
 
@@ -179,14 +179,15 @@ class CorpusData:
         return [s for _, s in scored[:limit]]
 
 
-def _richness(saint: dict, texts: dict) -> float:
+def _richness(saint: dict, texts: dict, fame: bool = False) -> float:
     bio = ((texts.get(saint["id"], {}) or {}).get("bio") or {}).get("fr") or ""
     score = min(len(bio), 3000) / 100
     # Le patronage n'est renseigné que pour les saints les plus connus (≈ 5 % des fiches).
     score += 8 if saint.get("patronage") else 0
     score += len(saint.get("titles") or [])
     score += 4 if saint.get("statut") == "saint" else 0
-    score -= 3 if saint.get("circa") else 0
+    # Une date approximative compte pour choisir une fiche à montrer, pas pour la notoriété.
+    score -= 3 if saint.get("circa") and not fame else 0
     return score
 
 

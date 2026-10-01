@@ -27,6 +27,13 @@ ACTIONS = {
     "apparitions_off": "Retour aux saints",
     "open_apparition": "Ouverture d'une apparition",
     "hold": "Pause",
+    "level_up": "Remonter d'un niveau",
+    "miracles_on": "Mode miracles",
+    "show_lieux": "Lieux marqués par le saint",
+    "show_croises": "Saints qu'il a pu croiser",
+    "search_list": "Recherche",
+    "close_panel": "Fermeture du panneau",
+    "frame_view": "Cadrage montré à la main",
 }
 
 
