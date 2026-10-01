@@ -25,6 +25,8 @@ export const ACTIONS = {
   level_up: 'Remonter d\'un niveau', miracles_on: 'Mode miracles', show_lieux: 'Lieux marqués par le saint',
   show_croises: 'Saints qu\'il a pu croiser', open_marker: 'Ouverture d\'une croix de la carte', search_list: 'Recherche',
   close_panel: 'Fermeture du panneau', frame_view: 'Cadrage montré à la main', open_list_item: 'Fiche choisie dans la liste',
+  open_tab: 'Ouverture d\'un onglet', press: 'Appui sur un bouton', select_option: 'Réglage', type_field: 'Saisie',
+  scroll_panel: 'Défilement', toggle: 'Dépliage', quiz_correct: 'Bonne réponse au quiz',
 };
 
 const ROMAN = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10, xi: 11, xii: 12, xiii: 13, xiv: 14,
@@ -164,7 +166,8 @@ export class Planner {
       close_profile: 0.6, century_filter: 14 / s.typing + 1.5, calendar: 1.5, apparitions_on: 1, apparitions_off: 1,
       open_apparition: 8 / s.typing + t + 1, hold: s.hold, pan: 1.5 + s.settle,
       level_up: t + s.settle, miracles_on: 1, show_lieux: t + s.settle + 1, show_croises: t + s.settle + 1, open_marker: 2.5,
-      search_list: 12 / s.typing + 1.5, close_panel: 0.6, frame_view: 1.6 + 2.6 * s.zoom + s.settle, open_list_item: t + 1 }[action];
+      search_list: 12 / s.typing + 1.5, close_panel: 0.6, frame_view: 1.6 + 2.6 * s.zoom + s.settle, open_list_item: t + 1,
+      open_tab: 1.4, press: 1.4, select_option: 2, type_field: 1.5, scroll_panel: 2, toggle: 1.2, quiz_correct: 3 }[action];
   }
 
   describe(it) {
@@ -182,6 +185,12 @@ export class Planner {
       case 'pan': return `Déplacement vers le ${{ north: 'nord', south: 'sud', east: 'est', west: 'ouest' }[p.direction] || p.direction}`;
       case 'zoom_in': return p.factor && p.factor !== 2 ? `Zoom avant ×${p.factor}` : 'Zoom avant';
       case 'search_list': return `Recherche : ${p.query}`;
+      case 'open_tab': return `Onglet : ${{ menu: 'menu', daily: 'Saint du jour', search: 'Rechercher', add: 'Ajouter', jeux: 'Jeux', settings: 'Paramètres' }[p.tab] || p.tab}`;
+      case 'press': return `Appuie sur ${p.label ? `« ${p.label} »` : `${p.what || 'l\'élément'} n° ${(p.index ?? 0) + 1}`}`;
+      case 'select_option': return `${{ language: 'Langue', theme: 'Thème', basemap: 'Fond de carte' }[p.field] || p.field} : ${p.label || p.value}`;
+      case 'type_field': return `Écrit « ${p.text} »`;
+      case 'scroll_panel': return p.text || p.section ? `Défile jusqu'à « ${p.text || p.section} »` : `Défilement ${{ down: 'vers le bas', up: 'vers le haut', top: 'en haut', bottom: 'en bas' }[p.to] || ''}`;
+      case 'toggle': return `${p.open === false ? 'Replie' : 'Déplie'} ${{ intro: 'le bandeau', legend: 'la légende', paliers: 'les paliers', idees: 'les idées d\'indices', bio: 'la biographie' }[p.what] || p.what}`;
       case 'open_list_item': return `Fiche dans la liste : ${p.name || `n° ${(p.index ?? 0) + 1}`}`;
       case 'frame_view': return `Cadrage${p.near ? ' sur ' + p.near : ''} (×${(p.ratio || 1).toFixed(1)})`;
       case 'hold': return p.seconds ? `Pause de ${p.seconds} s` : 'Pause';

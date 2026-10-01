@@ -543,13 +543,19 @@ export class SanctiMaps {
 
   // ------------------------------------------------------------- panneau
   async openTab(tab) {
+    // Les jeux s'ouvrent sur leur accueil, même si une partie était en cours.
+    if (tab === 'jeux' && this.q('#panel.is-open .jeux .jeux__retour')) {
+      this.q('#panel.is-open .jeux .jeux__retour').click(); await this.clock.wait(400); return;
+    }
+    const VIEW = { search: '.search', daily: '.daily', jeux: '.jeux', add: 'form.add', settings: '.settings-view' };
     const panel = this.q('#panel');
-    const here = panel.querySelector(tab === 'search' ? '.search' : '.daily');
-    if (panel.classList.contains('is-open') && here && !panel.classList.contains('is-menu')) return;
-    if (!panel.classList.contains('is-open')) { this.q('.panel-toggle').click(); await this.clock.wait(200); }
-    if (!panel.classList.contains('is-menu')) { this.q('.panel__back')?.click(); await this.clock.wait(100); }
+    const here = tab === 'menu' ? panel.classList.contains('is-menu') : !!panel.querySelector(VIEW[tab]);
+    if (panel.classList.contains('is-open') && here && (tab === 'menu' || !panel.classList.contains('is-menu'))) return;
+    if (!panel.classList.contains('is-open')) { this.q('.panel-toggle').click(); await this.clock.wait(250); }
+    if (!panel.classList.contains('is-menu')) { this.q('.panel__back')?.click(); await this.clock.wait(150); }
+    if (tab === 'menu') { await this.clock.wait(300); return; }
     this.q(`.menu__item[data-tab="${tab}"]`).click();
-    await this.waitFor('panneau', () => panel.querySelector(tab === 'search' ? '.search' : '.daily'), 5000);
+    await this.waitFor('panneau', () => panel.querySelector(VIEW[tab]), 5000);
     await this.clock.wait(400);
   }
   async type(input, text) {
@@ -822,6 +828,144 @@ export class SanctiMaps {
     }
     const r = await this.zoomTo(x, y, ratio || 1);
     return new Report('cadrage', r.ok !== false, `×${(ratio || 1).toFixed(1)}`);
+  }
+
+  // ------------------------------------------- toutes les interactions du site
+
+  /** Ce qu'on peut toucher à l'écran : boutons, résumés dépliables, puces, cases. */
+  pressables(scope) {
+    const root = scope ? this.q(scope) : this.D;
+    if (!root) return [];
+    return [...root.querySelectorAll('button, summary, a[href], [role=button], label.check, .chip')]
+      .filter((e) => e.getClientRects().length && !e.disabled && !e.closest('[hidden], svg.map'));
+  }
+
+  /**
+   * Boutons qui feraient sortir de la vidéo : téléchargement, autorisation du
+   * téléphone, installation, compte, envoi d'une proposition. Jamais pressés.
+   */
+  static unsafe(el) {
+    const txt = fold(el.textContent);
+    return !!(el.closest('form.add') && (el.type === 'submit' || /envoyer|proposer|publier|enregistrer/.test(txt)))
+      || /calendrier du telephone|ajouter ces .* au calendrier|installer|activer|notification|se connecter|connexion|deconnect|code|lettre|courriel|e-mail|mailto/.test(txt)
+      || (el.tagName === 'A' && /^(mailto|https?):/.test(el.getAttribute('href') || '') && !el.closest('.trail'));
+  }
+
+  /** Appuie sur un élément de l'interface, désigné par son texte (ou un sélecteur et un rang). */
+  async press({ label, selector, index = 0, scope } = {}) {
+    let el = null;
+    if (selector) {
+      const list = [...this.D.querySelectorAll(selector)].filter((e) => e.getClientRects().length && !e.disabled);
+      el = list[index < 0 ? list.length + index : index];
+    } else if (label) {
+      const want = fold(label);
+      const all = this.pressables(scope);
+      const text = (e) => fold(e.getAttribute('aria-label') || e.textContent);
+      el = all.find((e) => text(e) === want) || all.find((e) => text(e).startsWith(want))
+        || all.find((e) => text(e).includes(want));
+    }
+    if (!el) return new Report('bouton', false, `« ${label ?? selector} » introuvable à l'écran`);
+    if (SanctiMaps.unsafe(el)) return new Report('bouton', false, `« ${el.textContent.trim()} » n'est pas pressé : il ferait sortir de la vidéo (téléchargement, autorisation, envoi)`);
+    const name = (el.textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    await this.clock.wait(350);
+    el.click();
+    await this.clock.wait(150);
+    // Le bouton a fait bouger la carte (« Voir sur la carte », « Voir la fiche ») : on suit au ralenti.
+    if (this.snapshot().pending) {
+      this.clock.speed = TRANSITION_MS / (this.style.transition * 1000);
+      try { await this.waitFor('carte', () => !this.snapshot().pending, 8000); } finally { this.clock.speed = 1; }
+      await this.stabilize();
+    } else await this.clock.wait(450);
+    if (this.snapshot().ficheOpen) this.memory.saint = this.snapshot().ficheName;
+    return new Report('bouton', true, `« ${name} »`);
+  }
+
+  /** Choisit une valeur dans les paramètres : langue, thème, fond de carte. */
+  async selectOption(field, value) {
+    await this.openTab('settings');
+    // Reconnus à leurs valeurs, pas à leur libellé : la langue du site peut avoir changé.
+    const SIGN = { language: 'fr', theme: 'dark', basemap: 'off' };
+    const select = [...this.D.querySelectorAll('.settings select')].find((sel) => [...sel.options].some((o) => o.value === SIGN[field]));
+    const box = select?.closest('label.field');
+    if (!select) return new Report('paramètre', false, `réglage « ${field} » introuvable`);
+    const want = fold(value);
+    const opt = [...select.options].find((o) => fold(o.value) === want || fold(o.textContent) === want)
+      || [...select.options].find((o) => fold(o.textContent).startsWith(want));
+    if (!opt) return new Report('paramètre', false, `valeur « ${value} » inconnue (${[...select.options].map((o) => o.textContent).join(', ')})`);
+    select.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    await this.clock.wait(400);
+    select.value = opt.value;
+    select.dispatchEvent(new this.W.Event('change', { bubbles: true }));
+    await this.clock.wait(600);
+    this.paintSea();
+    await this.stabilize();
+    return new Report('paramètre', select.value === opt.value, `${box?.querySelector('.field__label')?.textContent || field} : ${opt.textContent}`);
+  }
+
+  /** Écrit dans le champ visible du panneau (réponse du quiz, indice de « Qui est-ce ? »), puis valide. */
+  async typeField(text, submit = true) {
+    const input = [...this.D.querySelectorAll('#panel.is-open input[type=text], #panel.is-open input:not([type])')]
+      .find((e) => e.getClientRects().length && !e.disabled);
+    if (!input) return new Report('saisie', false, 'aucun champ à remplir à l\'écran');
+    input.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    await this.type(input, text);
+    if (submit) {
+      const form = input.closest('form');
+      if (form?.requestSubmit) form.requestSubmit(); else input.dispatchEvent(new this.W.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await this.clock.wait(700);
+    }
+    return new Report('saisie', true, `« ${text} »`);
+  }
+
+  /** Fait défiler le panneau ou la fiche, en douceur ; ou jusqu'à un titre (« Rappel quotidien »). */
+  async scrollPanel({ target = 'auto', to = 'down', text, section } = {}) {
+    const fiche = this.q('#fiche:not([hidden]) .fiche__body');
+    const panel = this.q('#panel.is-open .panel__body');
+    const box = target === 'fiche' ? fiche : target === 'panel' ? panel : (panel || fiche);
+    if (!box) return new Report('défilement', false, 'rien à faire défiler');
+    let goal;
+    if (section || text) {
+      const el = section ? box.querySelector(section)  // le libellé ne sert alors qu'à l'affichage
+        : [...box.querySelectorAll('h2, h3, legend, summary, .panel__section, .field__label')].find((e) => fold(e.textContent).includes(fold(text)));
+      if (!el) return new Report('défilement', false, `« ${text} » introuvable`);
+      goal = box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
+    } else if (to === 'top') goal = 0;
+    else if (to === 'bottom') goal = box.scrollHeight;
+    else goal = box.scrollTop + (to === 'up' ? -1 : 1) * box.clientHeight * 0.8;
+    goal = Math.max(0, Math.min(goal, box.scrollHeight - box.clientHeight));
+    const from = box.scrollTop; const t0 = this.clock.now(); const dur = 1200;
+    let q = 0;
+    while (q < 1) { await this.clock.frame(); q = Math.min(1, (this.clock.now() - t0) / dur); box.scrollTop = from + (goal - from) * ease(q); }
+    await this.clock.wait(300);
+    return new Report('défilement', true, text || section ? `jusqu'à « ${text || section} »` : to);
+  }
+
+  /** Déplie ou replie : bandeau d'en-tête, légende, paliers ou idées d'indices des jeux. */
+  async toggle(what, open) {
+    const SEL = { intro: 'details.intro__fold', legend: 'details.legend', paliers: 'details.jeux__paliers', idees: 'details.jeux__idees', bio: 'details.jeux__fiche-bio' };
+    if (what === 'paliers' && !this.q(SEL.paliers)) await this.openTab('jeux');   // ils sont sur l'accueil des jeux
+    const d = this.q(SEL[what]);
+    if (!d) return new Report('dépliage', false, `« ${what} » absent de l'écran`);
+    if (open === undefined || d.open !== open) { d.querySelector('summary').click(); await this.clock.wait(500); }
+    await this.stabilize();
+    return new Report('dépliage', true, `${what} ${d.open ? 'déplié' : 'replié'}`);
+  }
+
+  /** Quiz : la bonne réponse (affichée d'abord, comme le jeu le permet). */
+  async quizCorrect() {
+    if (!this.q('.jeux__quiz')) return new Report('quiz', false, 'aucune question de quiz à l\'écran');
+    if (!this.q('.jeux__revele')) {
+      const show = this.pressables('#panel').find((e) => fold(e.textContent).startsWith('afficher la reponse'));
+      if (show) { show.click(); await this.clock.wait(900); }
+    }
+    const revealed = this.q('.jeux__revele')?.textContent.replace(/^[^:]*:\s*/, '').trim();
+    if (!revealed) return new Report('quiz', false, 'réponse non affichable dans ce mode');
+    const choice = [...this.D.querySelectorAll('.jeux__reponse')].find((b) => fold(b.textContent) === fold(revealed));
+    if (choice) { choice.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); await this.clock.wait(400); choice.click(); }
+    else return this.typeField(revealed, true);
+    await this.clock.wait(700);
+    return new Report('quiz', true, `réponse : ${revealed}`);
   }
 
   // ------------------------------------------------------------- apparitions

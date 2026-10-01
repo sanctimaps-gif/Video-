@@ -328,6 +328,100 @@ async function command(text) {
   const done = (report, shots = []) => ({ report, shots });
   const run = async (shot) => done(await director.run({ params: {}, ...shot }), [shot]);
 
+  const runAll = async (shots) => {
+    let last = null;
+    for (const shot of shots) { last = await director.run({ params: {}, ...shot }); if (!last.ok) return done(last); }
+    return done(last, shots);
+  };
+  const press = (label, extra = {}) => ({ action: 'press', params: { label, ...extra } });
+  const pressAt = (selector, index, what) => ({ action: 'press', params: { selector, index, what } });
+  const ordinal = (txt) => {
+    const O = { premier: 0, premiere: 0, '1er': 0, '1re': 0, deuxieme: 1, second: 1, seconde: 1, troisieme: 2, quatrieme: 3,
+      cinquieme: 4, sixieme: 5, septieme: 6, huitieme: 7, dernier: -1, derniere: -1 };
+    const w = /\b(premier|premiere|1er|1re|deuxieme|second|seconde|troisieme|quatrieme|cinquieme|sixieme|septieme|huitieme|dernier|derniere|\d+)(?:e|eme)?\b/.exec(txt);
+    return w ? (w[1] in O ? O[w[1]] : parseInt(w[1], 10) - 1) : 0;
+  };
+  const NOTO = [['tres connus', 'Très connus'], ['moins connus', 'Moins connus'], ['peu connus', 'Peu connus'], ['inconnus', 'Inconnus']];
+  const notoriety = () => NOTO.find(([k]) => t.includes(k))?.[1];
+
+  // ------------------------------------------------ onglets, paramètres
+  if (/\b(ouvre|affiche|montre|va dans) (le |les |l )?(menu|sommaire)\b/.test(t)) return run({ action: 'open_tab', params: { tab: 'menu' } });
+  if (/\b(parametres|reglages)\b/.test(t) && !/\b(theme|langue|fond)\b/.test(t)) return run({ action: 'open_tab', params: { tab: 'settings' } });
+  if (/\b(onglet )?(ajouter|proposer un saint|proposition)\b/.test(t) && /\b(ouvre|montre|affiche|onglet)\b/.test(t)) return run({ action: 'open_tab', params: { tab: 'add' } });
+  if (/\b(ouvre|montre|affiche) (l onglet )?(le )?saint du jour\b/.test(t)) return run({ action: 'open_tab', params: { tab: 'daily' } });
+  if (/\b(ouvre|montre|affiche) (l onglet |la )?recherche\b/.test(t)) return run({ action: 'open_tab', params: { tab: 'search' } });
+  if ((m = /\btheme (sombre|clair|systeme|automatique)\b|\bmode (sombre|clair)\b/.exec(t))) {
+    const v = { sombre: 'dark', clair: 'light', systeme: 'system', automatique: 'system' }[m[1] || m[2]];
+    return run({ action: 'select_option', params: { field: 'theme', value: v, label: m[1] || m[2] } });
+  }
+  if ((m = /\b(?:langue|en) (francais|anglais|espagnol|italien|portugais|allemand|neerlandais|polonais|russe|arabe|chinois|latin|english)\b/.exec(t)) && /\b(langue|passe|mets|affiche)\b/.test(t)) {
+    const code = { francais: 'fr', anglais: 'en', english: 'en', espagnol: 'es', italien: 'it', portugais: 'pt', allemand: 'de', neerlandais: 'nl', polonais: 'pl', russe: 'ru', arabe: 'ar', chinois: 'zh', latin: 'la' }[m[1]];
+    return run({ action: 'select_option', params: { field: 'language', value: code, label: m[1] } });
+  }
+  if (/\bfond de carte\b/.test(t)) {
+    const off = /\b(desactive|jamais|sans|coupe|enleve)\b/.test(t);
+    return run({ action: 'select_option', params: { field: 'basemap', value: off ? 'off' : 'auto', label: off ? 'jamais' : 'au zoom rapproché' } });
+  }
+  if ((m = /\b(?:montre|va a|defile jusqu a|descends? jusqu a) (?:la |le |l )?(rappel quotidien|rappel|installation|ecran d accueil|compte|affichage)\b/.exec(t))) {
+    const section = { 'rappel quotidien': '.reminder', rappel: '.reminder', installation: '.install', 'ecran d accueil': '.install', compte: '.account', affichage: '.settings' }[m[1]];
+    const label = { '.reminder': 'Rappel quotidien', '.install': "Écran d'accueil", '.account': 'Compte', '.settings': 'Affichage' }[section];
+    return runAll([{ action: 'open_tab', params: { tab: 'settings' } }, { action: 'scroll_panel', params: { target: 'panel', section, text: label } }]);
+  }
+
+  // -------------------------------------------------------------- jeux
+  if (/\b(ouvre|montre|affiche) (les )?jeux\b|^jeux$/.test(t)) return run({ action: 'open_tab', params: { tab: 'jeux' } });
+  if (/\b(lance|commence|joue|demarre)\b.*\bquiz\b|^quiz$/.test(t)) {
+    const lvl = /niveau 3|ecrit/.test(t) ? 'Niveau 3' : /niveau 2|etendu/.test(t) ? 'Niveau 2' : 'Niveau 1';
+    const shots = [{ action: 'open_tab', params: { tab: 'jeux' } }, press('Quiz des saints'), press(lvl)];
+    if (notoriety()) shots.push(press(notoriety()));
+    return runAll([...shots, press('Commencer')]);
+  }
+  if (/\b(lance|commence|joue|demarre)\b.*\bchaine\b/.test(t)) {
+    const lvl = ['facile', 'moyen', 'complique', 'difficile', 'impossible'].find((k) => t.includes(k));
+    const label = { facile: 'Facile', moyen: 'Moyen', complique: 'Compliqué', difficile: 'Difficile', impossible: 'Impossible' }[lvl];
+    return runAll([{ action: 'open_tab', params: { tab: 'jeux' } }, press('Chaîne de saints'), ...(label ? [press(label)] : []), press('Commencer')]);
+  }
+  if (/\b(lance|commence|joue|demarre)\b.*\bqui est ce\b/.test(t)) {
+    return runAll([{ action: 'open_tab', params: { tab: 'jeux' } }, press('Qui est-ce'), ...(notoriety() ? [press(notoriety())] : []), press('Commencer')]);
+  }
+  if (/\b(bonne reponse|reponds? juste|la bonne)\b/.test(t)) return run({ action: 'quiz_correct' });
+  if (/\b(reponds?|reponse|choisis la reponse)\b/.test(t) && /\b(\d+|premiere|deuxieme|troisieme|quatrieme|derniere)\b/.test(t) && sm.q('.jeux__reponse')) {
+    return run(pressAt('.jeux__reponse', ordinal(t), 'réponse'));
+  }
+  if ((m = /^(?:reponds|ecris|demande|indice)\s*:?\s+(.+)$/i.exec(clean)) || (m = /^est[- ]ce (?:un|une|que)?\s*(.+?)\s*\??$/i.exec(clean))) {
+    return run({ action: 'type_field', params: { text: m[1], submit: true } });
+  }
+  if (/\bquestion suivante\b/.test(t)) return run(press('Question suivante'));
+  if (/\b(affiche|montre|voir) la reponse\b/.test(t)) return run(press('Afficher la réponse'));
+  if (/\b(avance|va|choisis|passe)\b.*\b(voisin|maillon|saint suivant)\b|\bavance vers\b/.test(t) && sm.q('.jeux__voisin')) {
+    return run(pressAt('.jeux__voisin', ordinal(t), 'voisin'));
+  }
+  if (/\b(un indice|donne un indice)\b/.test(t)) return run(press('Un indice'));
+  if (/\b(recule d un maillon|revenir d un maillon)\b/.test(t)) return run(press('Revenir d’un maillon'));
+  if (/\babandonne\b/.test(t)) return run(press('Abandonner'));
+  if (/\brejoue[rz]?\b/.test(t)) return run(press('Rejouer'));
+  if (/\b(retour aux jeux)\b/.test(t)) return run(press('Jeux', { scope: '#panel' }));
+  if (/\bpaliers\b/.test(t)) return run({ action: 'toggle', params: { what: 'paliers', open: true } });
+  if (/\bidees d indices\b/.test(t)) return run({ action: 'toggle', params: { what: 'idees', open: true } });
+
+  // --------------------------------------------- panneaux, bandeau, légende
+  if (/\b(saint du jour )?(jour suivant|suivant)\b/.test(t) && sm.q('#panel.is-open .daily')) return run(pressAt('.daily__nav button', 1, 'jour suivant'));
+  if (/\b(jour precedent|precedent)\b/.test(t) && sm.q('#panel.is-open .daily')) return run(pressAt('.daily__nav button', 0, 'jour précédent'));
+  if (/\b(deplie|ouvre|montre)\b.*\b(bandeau|en tete|index)\b/.test(t)) return run({ action: 'toggle', params: { what: 'intro', open: true } });
+  if (/\b(replie|ferme)\b.*\b(bandeau|en tete|index)\b/.test(t)) return run({ action: 'toggle', params: { what: 'intro', open: false } });
+  if (/\b(deplie|ouvre|montre)\b.*\blegende\b/.test(t)) return run({ action: 'toggle', params: { what: 'legend', open: true } });
+  if (/\b(replie|ferme|cache)\b.*\blegende\b/.test(t)) return run({ action: 'toggle', params: { what: 'legend', open: false } });
+  if (/\bdefile|descends dans|remonte dans|fais defiler\b/.test(t) && !/\bfiche\b/.test(t)) {
+    const to = /\b(haut|remonte)\b/.test(t) ? (/tout en haut/.test(t) ? 'top' : 'up') : (/tout en bas|jusqu en bas/.test(t) ? 'bottom' : 'down');
+    return run({ action: 'scroll_panel', params: { target: 'auto', to } });
+  }
+  if (/\bvoir sur la carte\b/.test(t)) return run(press('Voir sur la carte'));
+  if (/\bretour aux resultats\b/.test(t)) return run(press('Retour aux résultats'));
+  if (/\bvoir la fiche\b/.test(t) && sm.q('#panel.is-open .jeux')) return run(press('Voir la fiche'));
+  if ((m = /^(?:appuie sur|appuyer sur|presse|clique sur|touche)\s+(?:le bouton |la touche |l onglet )?(.+)$/i.exec(clean)) && !sm.visibleList().some((r) => fold(r.name).includes(fold(m[1])))) {
+    return run(press(m[1].replace(/^[«"]\s*|\s*[»"]$/g, '')));
+  }
+
   // Pauses et niveaux
   if ((m = /\bpause(?: de)?\s*(\d+(?:[.,]\d+)?)?/.exec(t))) {
     const seconds = m[1] ? parseFloat(m[1].replace(',', '.')) : null;
@@ -526,6 +620,53 @@ async function demoTick() {
   renderDemo();
 }
 
+/**
+ * Les gestes sur l'interface (onglets, boutons des jeux et des fiches, réglages,
+ * saisies). Ce que la comparaison d'états reconnaît déjà — pays, fiche, corpus,
+ * lieux, calendrier — n'est pas noté deux fois.
+ */
+function demoPush(shot) { shot.params ||= {}; demo.pending.push(shot); renderDemo(); }
+function demoClick(target) {
+  const el = target.closest?.('button, summary, a[href], [role=button], label.check, .chip');
+  if (!el || el.closest('svg.map')) return;
+  if (el.matches('.menu__item[data-tab]')) {
+    const tab = el.dataset.tab;
+    if (tab === 'map') return demoPush({ action: 'close_panel' });
+    return demoPush({ action: 'open_tab', params: { tab } });
+  }
+  if (el.matches('.panel-toggle')) return demoPush({ action: 'open_tab', params: { tab: 'menu' } });
+  if (el.matches('.panel__close')) return demoPush({ action: 'close_panel' });
+  if (el.matches('.panel__back')) return demoPush({ action: 'open_tab', params: { tab: 'menu' } });
+  // Déjà traduits par la comparaison d'états :
+  if (el.matches('.result, .picker__item, .corpus__btn, .crumb, .fiche__close, .detail__lieux-btn, .detail__croises-btn, .daily__nav button, .zoom__btn')) return;
+  if (el.matches('.jeux__reponse')) return demoPush({ action: 'press', params: { selector: '.jeux__reponse', index: [...sm.D.querySelectorAll('.jeux__reponse')].indexOf(el), what: 'réponse' } });
+  if (el.matches('.jeux__voisin')) return demoPush({ action: 'press', params: { selector: '.jeux__voisin', index: [...sm.D.querySelectorAll('.jeux__voisin')].indexOf(el), what: 'voisin' } });
+  if (el.tagName === 'SUMMARY') {
+    const d = el.closest('details');
+    const what = d?.matches('.intro__fold') ? 'intro' : d?.matches('.legend') ? 'legend' : d?.matches('.jeux__paliers') ? 'paliers' : d?.matches('.jeux__idees') ? 'idees' : null;
+    if (what) return demoPush({ action: 'toggle', params: { what, open: !d.open } });
+  }
+  if (el.type === 'submit') return;              // noté par l'envoi du formulaire
+  // Une carte (jeu, entrée de menu) se désigne par son titre, pas par tout son texte.
+  const title = el.querySelector('.menu__name, .jeux__voisin-nom, .picker__name');
+  const label = ((title || el).textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ');
+  if (label && label.length <= 60) demoPush({ action: 'press', params: { label } });
+}
+function demoChange(target) {
+  const box = target.closest?.('.settings label.field');
+  if (box && target.tagName === 'SELECT') {
+    const name = fold(box.querySelector('.field__label')?.textContent);
+    const field = name.startsWith('langue') ? 'language' : name.startsWith('theme') ? 'theme' : name.startsWith('fond') ? 'basemap' : null;
+    if (field) demoPush({ action: 'select_option', params: { field, value: target.value, label: target.selectedOptions[0]?.textContent } });
+  } else if (target.matches?.('.search__input') && target.value.trim()) {
+    demoPush({ action: 'search_list', params: { query: target.value.trim() } });
+  }
+}
+function demoSubmit(form) {
+  const input = form.querySelector?.('input[type=text], input:not([type])');
+  if (input?.value.trim() && !form.matches('form.add')) demoPush({ action: 'type_field', params: { text: input.value.trim(), submit: true } });
+}
+
 function renderDemo() {
   ui.demoList.replaceChildren();
   const planner = new Planner(data, sm?.memory);
@@ -554,6 +695,9 @@ function toggleDemo(on = !demo.on) {
       D.__smDemo = true;
       D.addEventListener('pointerdown', (e) => { if (e.isTrusted) demo.pointer = true; }, true);
       for (const type of ['pointerup', 'pointercancel']) D.addEventListener(type, (e) => { if (e.isTrusted) demo.pointer = false; }, true);
+      D.addEventListener('click', (e) => { if (e.isTrusted && demo.on) demoClick(e.target); }, true);
+      D.addEventListener('change', (e) => { if (e.isTrusted && demo.on) demoChange(e.target); }, true);
+      D.addEventListener('submit', (e) => { if (e.isTrusted && demo.on) demoSubmit(e.target); }, true);
     }
     demo.timer = setInterval(() => demoTick().catch((e) => log(`Démonstration : ${e.message}`)), 250);
     // Sur un téléphone, la carte est au-dessus des commandes : on la ramène sous le doigt.

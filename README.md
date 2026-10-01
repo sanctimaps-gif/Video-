@@ -17,7 +17,15 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   saint, croix la plus proche, saint choisi dans la liste affichée (« Ouvre le premier saint de la
   liste », « Ouvre Remi de Reims »), lecture de la fiche, lieux marqués, saints croisés ; siècles
   (avec pays), saints nés à…, fêtes (aujourd'hui, demain, une date) ; apparitions (dans un
-  pays), miracles, saints ; pauses.
+  pays), miracles, saints ; pauses ;
+  **jeux** (quiz à trois niveaux et quatre degrés de notoriété, bonne réponse ou réponse n°,
+  question suivante ; chaîne de saints et ses voisins, indice, abandon ; « Qui est-ce ? » et ses
+  indices ; paliers) ; **paramètres** (thème, langue, fond de carte, rappel quotidien, écran
+  d'accueil, compte), menu, onglet « Ajouter », saint du jour suivant/précédent, défilement des
+  panneaux, bandeau et légende ; et tout autre bouton du site par « Appuie sur … ».
+  Les boutons qui feraient sortir de la vidéo (téléchargement, autorisation du téléphone,
+  installation, compte, envoi d'une proposition) ne sont jamais pressés. Chaque chargement de
+  la carte repart des réglages par défaut du site.
 * **« Enregistrer la vidéo (MP4) »** — iPhone, iPad et ordinateur : la vidéo est fabriquée
   image par image sur l'appareil (30 images/s exactes, 1080p, H.264), puis proposée au
   téléchargement ou, sur iPhone, à « Enregistrer la vidéo » dans Photos. Le rendu prend

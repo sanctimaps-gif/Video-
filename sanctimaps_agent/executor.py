@@ -217,6 +217,22 @@ class ShotExecutor:
         if act == "open_apparition":
             return await resilient(act, [lambda: self.app.select_apparition(p.get("name"))], self.max_attempts)
 
+        if act == "open_tab":
+            return await resilient(act, [lambda: a.open_tab(p.get("tab", "menu"))], self.max_attempts)
+        if act == "press":
+            return await resilient(act, [lambda: a.press(p.get("label"), p.get("selector"), int(p.get("index") or 0),
+                                                         p.get("scope"))], 2)
+        if act == "select_option":
+            return await resilient(act, [lambda: a.select_option(p["field"], p["value"])], 2)
+        if act == "type_field":
+            return await resilient(act, [lambda: a.type_field(p["text"], p.get("submit", True))], 1)
+        if act == "scroll_panel":
+            return await resilient(act, [lambda: a.scroll_panel(p.get("target", "auto"), p.get("to", "down"),
+                                                               p.get("text"), p.get("section"))], 1)
+        if act == "toggle":
+            return await resilient(act, [lambda: a.toggle(p["what"], p.get("open"))], 1)
+        if act == "quiz_correct":
+            return await resilient(act, [a.quiz_correct], 1)
         if act == "open_list_item":
             idx = p.get("index")
             return await resilient(act, [lambda: a.open_from_list(p.get("name"), idx if isinstance(idx, int) else None),

@@ -7,6 +7,7 @@ celui demandé. Un clic n'est jamais supposé réussi.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 import math
@@ -767,6 +768,160 @@ class SanctiMapsAdapter:
         if ok:
             self.memory.selected_saint = snap.fiche_name
         return ActionReport("open_list_item", ok, f"fiche « {snap.fiche_name} » (depuis la liste)")
+
+    # ------------------------------------------ toutes les interactions du site
+
+    UNSAFE = re.compile(r"calendrier du telephone|ajouter ces .* au calendrier|installer|activer|notification|"
+                        r"se connecter|connexion|deconnect|code|lettre|courriel|e-mail|mailto")
+
+    async def open_tab(self, tab: str) -> ActionReport:
+        """Ouvre un onglet du panneau : menu, saint du jour, recherche, ajouter, jeux, paramètres."""
+        if tab == "jeux" and await self.page.locator("#panel.is-open .jeux .jeux__retour").count():
+            await self.page.locator("#panel.is-open .jeux .jeux__retour").click()
+            await self.stage.hold(0.4)
+            return ActionReport("open_tab", True, "accueil des jeux")
+        if tab == "menu":
+            if not await self.page.locator("#panel.is-open").count():
+                await self.page.locator(".panel-toggle").click()
+            elif await self.page.locator(".panel__back").count():
+                await self.page.locator(".panel__back").click()
+            await self.stage.hold(0.4)
+            return ActionReport("open_tab", True, "menu")
+        if tab in ("search", "daily"):
+            await self.open_sidebar_tab(tab)
+            return ActionReport("open_tab", True, tab)
+        view = {"jeux": ".jeux", "add": "form.add", "settings": ".settings-view"}[tab]
+        if not await self.page.locator(f"#panel.is-open {view}").count():
+            if not await self.page.locator("#panel.is-open").count():
+                await self.page.locator(".panel-toggle").click()
+                await self.stage.hold(0.25)
+            if await self.page.locator(".panel__back").count():
+                await self.page.locator(".panel__back").click()
+            await self.page.locator(f'.menu__item[data-tab="{tab}"]').click()
+            await self.page.wait_for_selector(f"#panel {view}")
+        await self.stage.hold(0.4)
+        return ActionReport("open_tab", True, tab)
+
+    async def press(self, label: str | None = None, selector: str | None = None, index: int = 0,
+                    scope: str | None = None) -> ActionReport:
+        """Appuie sur un élément désigné par son texte, ou par un sélecteur et un rang."""
+        found = await self.page.evaluate(
+            """([label, selector, index, scope]) => {
+              const fold = (t) => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/['’\-]/g, ' ').replace(/\s+/g, ' ').trim();
+              let list;
+              if (selector) list = [...document.querySelectorAll(selector)];
+              else { const root = scope ? document.querySelector(scope) : document;
+                list = root ? [...root.querySelectorAll('button, summary, a[href], [role=button], label.check, .chip')] : []; }
+              list = list.filter((e) => e.getClientRects().length && !e.disabled && !e.closest('[hidden], svg.map'));
+              let el = null;
+              if (selector) el = list[index < 0 ? list.length + index : index];
+              else { const w = fold(label); const tx = (e) => fold(e.getAttribute('aria-label') || e.textContent);
+                el = list.find((e) => tx(e) === w) || list.find((e) => tx(e).startsWith(w)) || list.find((e) => tx(e).includes(w)); }
+              if (!el) return null;
+              document.querySelectorAll('[data-sm-press]').forEach((e) => e.removeAttribute('data-sm-press'));
+              el.setAttribute('data-sm-press', '1');
+              return { text: (el.textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 60),
+                       submit: el.type === 'submit' && !!el.closest('form.add'), href: el.tagName === 'A' ? el.getAttribute('href') : null };
+            }""", [label, selector, index, scope])
+        if not found:
+            return ActionReport("press", False, f"« {label or selector} » introuvable à l'écran")
+        if found["submit"] or self.UNSAFE.search(fold(found["text"])) or (found["href"] or "").startswith(("mailto:", "http")):
+            return ActionReport("press", False, f"« {found['text']} » n'est pas pressé (téléchargement, autorisation ou envoi)")
+        target = self.page.locator("[data-sm-press]")
+        await target.scroll_into_view_if_needed()
+        await self.stage.hold(0.35)
+        await target.click()
+        await self.stage.hold(0.15)
+        if (await self.state()).raw.get("rafPending"):
+            await self.map.site_transition(lambda: asyncio.sleep(0))
+        else:
+            await self.stage.hold(0.45)
+        snap = await self.state()
+        if snap.raw.get("ficheOpen"):
+            self.memory.selected_saint = snap.fiche_name
+        return ActionReport("press", True, f"« {found['text']} »")
+
+    async def select_option(self, field: str, value: str) -> ActionReport:
+        await self.open_tab("settings")
+        sign = {"language": "fr", "theme": "dark", "basemap": "off"}[field]
+        ok = await self.page.evaluate(
+            """([sign, value]) => { const sel = [...document.querySelectorAll('.settings select')].find((s) => [...s.options].some((o) => o.value === sign));
+              if (!sel) return null; const opt = [...sel.options].find((o) => o.value === value || o.textContent.toLowerCase() === value.toLowerCase());
+              if (!opt) return null; sel.scrollIntoView({ block: 'nearest' }); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true }));
+              return opt.textContent; }""", [sign, value])
+        await self.stage.hold(0.8)
+        await self.map.stabilize()
+        return ActionReport("select_option", bool(ok), f"{field} : {ok}")
+
+    async def type_field(self, text: str, submit: bool = True) -> ActionReport:
+        field = self.page.locator("#panel.is-open input[type=text]:visible, #panel.is-open input:not([type]):visible").first
+        if not await field.count():
+            return ActionReport("type_field", False, "aucun champ à remplir")
+        await field.click()
+        per_char = 1.0 / max(1.0, self.style.typing_chars_per_s)
+        for ch in text:
+            await self.page.keyboard.type(ch)
+            await self.stage.hold(per_char)
+        if submit:
+            await self.page.keyboard.press("Enter")
+            await self.stage.hold(0.7)
+        return ActionReport("type_field", True, f"« {text} »")
+
+    async def scroll_panel(self, target: str = "auto", to: str = "down", text: str | None = None,
+                           section: str | None = None) -> ActionReport:
+        info = await self.page.evaluate(
+            """([target, to, text, section]) => {
+              const fiche = document.querySelector('#fiche:not([hidden]) .fiche__body'), panel = document.querySelector('#panel.is-open .panel__body');
+              const box = target === 'fiche' ? fiche : target === 'panel' ? panel : (panel || fiche); if (!box) return null;
+              let goal;
+              if (section || text) { const el = section ? box.querySelector(section) : [...box.querySelectorAll('h2, h3, legend, summary, .field__label')].find((e) => e.textContent.includes(text));
+                if (!el) return null; goal = box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12; }
+              else if (to === 'top') goal = 0; else if (to === 'bottom') goal = box.scrollHeight;
+              else goal = box.scrollTop + (to === 'up' ? -1 : 1) * box.clientHeight * 0.8;
+              box.dataset.smScroll = '1';
+              return { from: box.scrollTop, goal: Math.max(0, Math.min(goal, box.scrollHeight - box.clientHeight)) }; }""",
+            [target, to, text, section])
+        if not info:
+            return ActionReport("scroll_panel", False, "rien à faire défiler")
+        frames = self.stage.seconds_to_frames(1.2)
+        for i in range(1, frames + 1):
+            y = info["from"] + (info["goal"] - info["from"]) * (0.5 - 0.5 * math.cos(math.pi * i / frames))
+            await self.page.evaluate("(y) => { const b = document.querySelector('[data-sm-scroll]'); if (b) b.scrollTop = y; }", y)
+            await self.stage.frame("action")
+        await self.stage.hold(0.3)
+        return ActionReport("scroll_panel", True, text or section or to)
+
+    async def toggle(self, what: str, open_: bool | None = None) -> ActionReport:
+        sel = {"intro": "details.intro__fold", "legend": "details.legend", "paliers": "details.jeux__paliers",
+               "idees": "details.jeux__idees", "bio": "details.jeux__fiche-bio"}[what]
+        if what == "paliers" and not await self.page.locator(sel).count():
+            await self.open_tab("jeux")
+        details = self.page.locator(sel).first
+        if not await details.count():
+            return ActionReport("toggle", False, f"{what} absent de l'écran")
+        is_open = await details.evaluate("(d) => d.open")
+        if open_ is None or is_open != open_:
+            await details.locator("summary").first.click()
+            await self.stage.hold(0.5)
+        await self.map.stabilize()
+        return ActionReport("toggle", True, what)
+
+    async def quiz_correct(self) -> ActionReport:
+        if not await self.page.locator(".jeux__quiz").count():
+            return ActionReport("quiz_correct", False, "aucune question à l'écran")
+        if not await self.page.locator(".jeux__revele").count():
+            await self.press(label="Afficher la réponse")
+        revealed = await self.page.evaluate(
+            "() => ((document.querySelector('.jeux__revele') || {}).textContent || '').replace(/^[^:]*:\\s*/, '').trim()")
+        if not revealed:
+            return ActionReport("quiz_correct", False, "réponse non affichable dans ce mode")
+        idx = await self.page.evaluate(
+            "(r) => [...document.querySelectorAll('.jeux__reponse')].findIndex((b) => b.textContent.trim() === r)", revealed)
+        if idx >= 0:
+            await self.press(selector=".jeux__reponse", index=idx)
+        else:
+            await self.type_field(revealed)
+        return ActionReport("quiz_correct", True, f"réponse : {revealed}")
 
     async def frame_view(self, x: float, y: float, ratio: float, country: str | None) -> ActionReport:
         """Retrouve un cadrage montré à la main dans le studio."""

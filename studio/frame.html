@@ -51,6 +51,9 @@ window.__SM_BOOT = function () {
   }
 };
 window.__SM_BOOT();
+// Chaque chargement repart des réglages par défaut du site : une langue ou un
+// thème choisis pendant une vidéo ne doivent pas rester pour la suivante.
+try { for (const k of ['sanctimaps.lang', 'sanctimaps.theme.v1', 'sanctimaps.basemap.v1', 'sanctimaps.legende.v1']) localStorage.removeItem(k); } catch (e) { /* sans stockage */ }
 </script>
 </head>
 <body>

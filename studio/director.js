@@ -72,6 +72,13 @@ export class Director {
         return new Report('déplacement', r.ok, r.ok ? '' : 'borné par le site');
       }
       case 'open_list_item': return this.attempt('fiche', [() => sm.openFromList({ name: p.name, index: p.index }), () => (p.name ? sm.openSaint(p.name) : sm.openFromList({ index: p.index }))]);
+      case 'open_tab': await sm.openTab(p.tab); return new Report('onglet', true, p.tab);
+      case 'press': return sm.press(p);
+      case 'select_option': return sm.selectOption(p.field, p.value);
+      case 'type_field': return sm.typeField(p.text, p.submit !== false);
+      case 'scroll_panel': return sm.scrollPanel(p);
+      case 'toggle': return sm.toggle(p.what, p.open);
+      case 'quiz_correct': return sm.quizCorrect();
       case 'level_up': return sm.levelUp();
       case 'miracles_on': return sm.setCorpus('miracles');
       case 'show_lieux': return sm.ficheButton('lieux');

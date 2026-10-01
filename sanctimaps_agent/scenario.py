@@ -35,6 +35,13 @@ ACTIONS = {
     "close_panel": "Fermeture du panneau",
     "frame_view": "Cadrage montré à la main",
     "open_list_item": "Fiche choisie dans la liste",
+    "open_tab": "Ouverture d'un onglet",
+    "press": "Appui sur un bouton",
+    "select_option": "Réglage",
+    "type_field": "Saisie",
+    "scroll_panel": "Défilement",
+    "toggle": "Dépliage",
+    "quiz_correct": "Bonne réponse au quiz",
 }
 
 
