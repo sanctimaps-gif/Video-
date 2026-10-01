@@ -114,6 +114,10 @@ class SanctiMapsAdapter:
         await self.site.load()
         await self.close_intro()
         await self.close_sidebar()
+        # Autour du planisphère, la mer de la carte plutôt que le fond de la page.
+        await self.page.evaluate(
+            "() => { const s = document.querySelector('svg.map .sheet'), h = document.querySelector('#map-host');"
+            " if (s && h) { const f = getComputedStyle(s).fill; if (f && f !== 'none') h.style.background = f; } }")
         # Temps des animations sous contrôle de l'agent à partir d'ici.
         await self.stage.browser.set_manual_time(True)
         snap = await self.map.sync.wait_until_map_stable()

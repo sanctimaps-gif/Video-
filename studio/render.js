@@ -116,13 +116,27 @@ export class FrameRenderer {
     return style;
   }
 
+  /** La couleur de la mer de la carte (clair ou sombre, selon le thème du site). */
+  seaColor() {
+    const win = this.iframe.contentWindow, D = this.D;
+    const sheet = D.querySelector('svg.map .sheet');
+    const fill = sheet && win.getComputedStyle(sheet).fill;
+    if (fill && fill !== 'none' && !fill.startsWith('url')) return fill;
+    for (let el = D.querySelector('#map-host'); el; el = el.parentElement) {
+      const bg = win.getComputedStyle(el).backgroundColor;
+      if (bg && bg !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(bg)) return bg;
+    }
+    return '#cddbe4';
+  }
+
   async drawMap() {
     const D = this.D, win = this.iframe.contentWindow;
     const svg = D.querySelector('svg.map'); const host = D.querySelector('#map-host');
     if (!svg || !host) return;
     const r = svg.getBoundingClientRect(); const hr = host.getBoundingClientRect();
     const s = this.scale;
-    this.ctx.fillStyle = win.getComputedStyle(host).backgroundColor || '#cfdde3';
+    // Autour du planisphère, la mer : pas de bandes de fond de page dans la vidéo.
+    this.ctx.fillStyle = this.seaColor();
     this.ctx.fillRect(hr.left * s, hr.top * s, hr.width * s, hr.height * s);
     const root = `${D.documentElement.dataset.theme || ''}|${host.dataset.mode}|${host.className}|${D.documentElement.dataset.tiles || ''}`;
     const clone = svg.cloneNode(true);
@@ -190,7 +204,7 @@ export class FrameRenderer {
 
   async renderFrame() {
     if (this.encoderError) throw this.encoderError;
-    this.ctx.fillStyle = '#f8eede'; this.ctx.fillRect(0, 0, this.width, this.height);
+    this.ctx.fillStyle = this.seaColor(); this.ctx.fillRect(0, 0, this.width, this.height);
     const t0 = performance.now();
     await this.drawMap();
     this.mapMs += performance.now() - t0;

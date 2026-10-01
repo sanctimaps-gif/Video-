@@ -287,11 +287,26 @@ export class SanctiMaps {
     (this.q('#loader-go') || this.q('#loader-close'))?.click();
     await this.waitFor('fermeture de la présentation', () => !this.q('#loader'), 5000);
     await this.closePanel();
+    this.paintSea();
+    // Le thème du téléphone peut changer (clair ↔ sombre) : la mer suit.
+    this.W.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => setTimeout(() => this.paintSea(), 50));
     this.clock.attach(this.W);
     await this.stabilize();
     this.baseK = this.snapshot().transform?.[0];
     return new Report('open', true, 'carte prête');
   }
+  /**
+   * Autour du planisphère, la page laisse voir son fond (bandes claires en haut
+   * et en bas en format vertical). On y met la couleur de la mer de la carte.
+   */
+  paintSea() {
+    const sheet = this.q('svg.map .sheet'); const host = this.q('#map-host');
+    if (!sheet || !host) return;
+    host.style.background = '';
+    const fill = this.W.getComputedStyle(sheet).fill;
+    if (fill && fill !== 'none' && !fill.startsWith('url')) host.style.background = fill;
+  }
+
   async closePanel() {
     if (this.q('#panel.is-open')) { this.q('.panel__close')?.click(); await this.clock.wait(250); }
   }
