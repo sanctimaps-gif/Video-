@@ -5,12 +5,6 @@
 Le studio s'utilise directement dans le navigateur : on décrit la vidéo, il prépare
 le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en direct et la filme.
 
-* **« Rendre en arrière-plan »** (recommandé sur iPhone) : le studio prépare une demande
-  (issue GitHub) contenant le scénario ; une fois validée, le workflow
-  `.github/workflows/rendu-video.yml` tourne la vidéo sur GitHub Actions avec l'agent Python
-  (image par image, 30 i/s, H.264), la publie dans les *Releases* et répond dans la demande
-  avec le lien : GitHub envoie une notification. On peut fermer la page entre-temps.
-  Seules les demandes du propriétaire du dépôt déclenchent un rendu.
 * **Scénario modifiable** : durée, ordre (↑ ↓) et suppression (✕) de chaque plan ; chaque
   commande testée dans « Piloter la carte » peut être ajoutée au scénario. Le scénario est
   conservé sur l'appareil.
@@ -23,7 +17,7 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   saint, croix la plus proche, lecture de la fiche, lieux marqués, saints croisés ; siècles
   (avec pays), saints nés à…, fêtes (aujourd'hui, demain, une date) ; apparitions (dans un
   pays), miracles, saints ; pauses.
-* **« Enregistrer sur cet appareil »** — iPhone, iPad et ordinateur : la vidéo est fabriquée
+* **« Enregistrer la vidéo (MP4) »** — iPhone, iPad et ordinateur : la vidéo est fabriquée
   image par image sur l'appareil (30 images/s exactes, 1080p, H.264), puis proposée au
   téléchargement ou, sur iPhone, à « Enregistrer la vidéo » dans Photos. Le rendu prend
   quelques minutes ; la progression s'affiche sur la carte. Nécessite iOS 16.4+ ou un

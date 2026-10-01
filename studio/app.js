@@ -16,7 +16,7 @@ const ui = {
   overlay: $('#overlay'), state: $('#state'), memory: $('#memory'), result: $('#result'), cmd: $('#cmd'), cmdGo: $('#cmd-go'),
   recHint: $('#rec-hint'), total: $('#total'), capture: $('#capture'), progress: $('#progress'),
   progressFill: $('#progress-fill'), progressText: $('#progress-text'), cmdResult: $('#cmd-result'),
-  background: $('#background'), bgResult: $('#bg-result'), addPause: $('#add-pause'), clear: $('#clear'),
+  addPause: $('#add-pause'), clear: $('#clear'),
   demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
 };
 
@@ -28,7 +28,7 @@ function log(line) { ui.log.textContent += line + '\n'; ui.log.scrollTop = ui.lo
 function overlay(html) { ui.overlay.innerHTML = html || ''; ui.overlay.classList.toggle('on', !!html); }
 function setBusy(b) {
   busy = b;
-  for (const el of [ui.plan, ui.shoot, ui.play, ui.cmdGo, ui.capture, ui.background]) el.disabled = b;
+  for (const el of [ui.plan, ui.shoot, ui.play, ui.cmdGo, ui.capture]) el.disabled = b;
   ui.stop.disabled = !b;
 }
 
@@ -551,49 +551,6 @@ function toggleDemo(on = !demo.on) {
   renderDemo();
 }
 
-// ------------------------------------------------- rendu en arrière-plan
-
-const REPO = (() => {
-  const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : 'sanctimaps-gif';
-  const repo = location.hostname.endsWith('.github.io') ? (location.pathname.split('/')[1] || 'Video-') : 'Video-';
-  return `${owner}/${repo}`;
-})();
-
-/**
- * Le rendu tourne sur GitHub (Actions), pas sur le téléphone : on peut fermer
- * la page. Le studio prépare une demande (issue) ; GitHub répond dans cette
- * demande avec le lien de la vidéo, et envoie une notification.
- */
-async function renderInBackground() {
-  if (busy) return;
-  setBusy(true);
-  try {
-    if (!scenario?.shots?.length) await plan();
-    if (!scenario?.shots?.length) return;
-    // Les choix laissés ouverts (« une fiche intéressante », « plusieurs zones »)
-    // sont fixés ici, pour que le serveur tourne exactement ce qui a été préparé.
-    for (const shot of scenario.shots) await director.resolve(shot);
-    renderTimeline();
-    const payload = { request: scenario.request, title: scenario.title || 'SanctiMaps', style: scenario.style,
-      speed: scenario.speed || 1, aspect: scenario.aspect,
-      shots: scenario.shots.map(({ id, action, params, duration, label }) => ({ id, action, params, duration, label })) };
-    const title = `[vidéo] ${payload.title}`.slice(0, 120);
-    const body = `Demande de rendu envoyée par le studio. Touchez « Submit new issue » (ou « Créer ») : la vidéo sera tournée sur GitHub, et le lien arrivera ici en commentaire.\n\n` +
-      `Durée : ${total(scenario).toFixed(0)} s · format ${scenario.aspect} · ${scenario.shots.length} plans\n\n` +
-      scenario.shots.map((s, i) => `${i + 1}. ${s.label} (${s.duration} s)`).join('\n') +
-      `\n\n\`\`\`json\n${JSON.stringify(payload)}\n\`\`\`\n`;
-    const url = `https://github.com/${REPO}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
-    ui.bgResult.innerHTML = `<p>1. Ouvrez la demande ci-dessous et validez-la sur GitHub.<br>2. Vous pouvez ensuite fermer cette page : la vidéo est tournée sur GitHub (5 à 15 min) et le lien arrive en notification.</p>
-      <div class="actions"><a class="go" target="_blank" rel="noopener"><button class="primary">Ouvrir la demande sur GitHub</button></a>
-      <a href="https://github.com/${REPO}/releases" target="_blank" rel="noopener"><button>Mes vidéos</button></a></div>`;
-    ui.bgResult.querySelector('a.go').href = url;
-    ui.bgResult.hidden = false;
-    const w = window.open(url, '_blank', 'noopener');
-    if (!w) log('Touchez « Ouvrir la demande sur GitHub » pour continuer.');
-  } catch (e) { log(`Échec : ${e.message}`); }
-  finally { setBusy(false); }
-}
-
 // ----------------------------------------------------------------- état
 
 clock.listeners.add(() => {
@@ -619,7 +576,6 @@ ui.play.addEventListener('click', playOnly);
 ui.stop.addEventListener('click', () => director?.stop());
 ui.aspect.addEventListener('change', async () => { if (!busy) { setBusy(true); try { await loadStage(); if (scenario) scenario.aspect = ui.aspect.value; renderTimeline(); } finally { setBusy(false); } } });
 ui.style.addEventListener('change', () => { if (scenario) { scenario.style = ui.style.value; renderTimeline(); } else save(); });
-ui.background.addEventListener('click', renderInBackground);
 ui.demo.addEventListener('click', () => { if (sm) toggleDemo(); });
 ui.demoAll.addEventListener('click', () => { addShots(demo.pending.splice(0)); renderDemo(); });
 ui.addPause.addEventListener('click', () => addShots([{ action: 'hold' }]));
