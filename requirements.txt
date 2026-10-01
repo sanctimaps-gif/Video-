@@ -1,0 +1,7 @@
+playwright>=1.45
+imageio-ffmpeg>=0.5
+numpy>=1.24
+pillow>=10
+anthropic>=0.70   # facultatif : vision et planification par Claude
+pytest>=8
+pytest-asyncio>=0.23

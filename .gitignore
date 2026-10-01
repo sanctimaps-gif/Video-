@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+runs/
+*.mp4
+.pytest_cache/
+*.egg-info/
