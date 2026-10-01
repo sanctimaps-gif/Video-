@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SanctiMaps</title>
+<script>
+/*
+ * Cadre du studio : charge la page *actuelle* de SanctiMaps et l'affiche ici,
+ * avec <base href> pointant sur le site. Code, styles et données viennent donc
+ * toujours de sanctimaps.fr ; seul le document est servi par le studio, ce qui
+ * lui permet de piloter la carte comme un lecteur (clics, molette, saisie).
+ */
+window.__SM_BOOT = function () {
+  if (window.__sm) return;
+  // Horloge des animations pilotable par le studio (ralentis, rendu régulier).
+  const nativeRAF = window.requestAnimationFrame.bind(window);
+  const nativeCAF = window.cancelAnimationFrame.bind(window);
+  const nativeNow = performance.now.bind(performance);
+  let manual = false, offset = 0, vnow = 0, nextId = 1e7;
+  const queue = new Map();
+  const now = () => (manual ? vnow : nativeNow() + offset);
+  performance.now = now;
+  window.requestAnimationFrame = (cb) => {
+    if (!manual) return nativeRAF(() => cb(now()));
+    const id = nextId++; queue.set(id, cb); return id;
+  };
+  window.cancelAnimationFrame = (id) => { if (queue.has(id)) queue.delete(id); else nativeCAF(id); };
+  window.__sm = {
+    manual(on) {
+      if (on && !manual) { vnow = now(); manual = true; }
+      else if (!on && manual) {
+        offset = vnow - nativeNow(); manual = false;
+        const pending = [...queue.values()]; queue.clear();
+        pending.forEach((cb) => nativeRAF(() => cb(now())));
+      }
+      return manual;
+    },
+    tick(dt) {
+      vnow += dt;
+      const pending = [...queue.values()]; queue.clear();
+      for (const cb of pending) { try { cb(vnow); } catch (e) { console.error(e); } }
+      return queue.size;
+    },
+    pending() { return queue.size; },
+  };
+  // Les gestes simulés n'ont pas de vrai pointeur : la capture ne doit pas échouer.
+  for (const name of ['setPointerCapture', 'releasePointerCapture']) {
+    const original = Element.prototype[name];
+    Element.prototype[name] = function (id) { try { return original.call(this, id); } catch (e) { return undefined; } };
+  }
+};
+window.__SM_BOOT();
+</script>
+</head>
+<body>
+<p id="boot" style="font:16px system-ui;padding:2rem;color:#555">Chargement de SanctiMaps…</p>
+<script>
+(async () => {
+  const params = new URLSearchParams(location.search);
+  const src = new URL(params.get('src') || 'https://sanctimaps.fr/').href;
+  try {
+    const response = await fetch(src, { cache: 'no-cache' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    let html = await response.text();
+    const boot = '<base href="' + src + '"><script>(' + window.__SM_BOOT.toString() + ')();<\/script>';
+    html = /<head[^>]*>/i.test(html) ? html.replace(/<head([^>]*)>/i, '<head$1>' + boot) : boot + html;
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (error) {
+    document.getElementById('boot').textContent =
+      'Impossible de charger SanctiMaps depuis ' + src + ' (' + error.message + ').';
+    parent.postMessage({ type: 'sm-frame-error', message: String(error.message), src }, '*');
+  }
+})();
+</script>
+</body>
+</html>

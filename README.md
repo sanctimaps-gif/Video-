@@ -1,5 +1,27 @@
 # Agent vidéo SanctiMaps
 
+**➜ Studio en ligne : https://sanctimaps-gif.github.io/Video-/**
+
+Le studio s'utilise directement dans le navigateur : on décrit la vidéo, il prépare
+le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en direct et la filme.
+
+* **Ordinateur (Chrome, Edge)** : « Tourner la vidéo » demande l'autorisation de filmer
+  l'onglet, enregistre la carte seule et propose le fichier à télécharger (MP4 quand le
+  navigateur sait l'écrire, WebM sinon).
+* **iPhone / iPad** : le navigateur ne peut pas se filmer lui-même ; le studio passe en plein
+  écran et l'on utilise l'enregistrement d'écran d'iOS (Centre de contrôle).
+
+Le studio charge à chaque fois la version actuelle de SanctiMaps (code et données servis par
+sanctimaps.fr) : rien n'est copié ni figé. Paramètres d'adresse : `?format=9:16`,
+`?demande=…` (texte de la demande), `?src=…` (autre instance du site).
+
+Pour des vidéos à cadence parfaite (rendu image par image, 30 i/s exacts, jusqu'en 4K),
+utilisez l'agent en ligne de commande décrit ci-dessous.
+
+---
+
+## Agent en ligne de commande
+
 Un agent réalisateur spécialisé **exclusivement** dans [SanctiMaps](https://sanctimaps.fr/) :
 on lui décrit une vidéo en français, il construit le scénario, navigue dans la carte en
 vérifiant chaque étape, filme image par image et exporte un MP4 H.264.

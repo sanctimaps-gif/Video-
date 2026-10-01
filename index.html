@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Studio vidéo SanctiMaps</title>
+<meta name="description" content="Décrivez une vidéo en français : le studio construit le scénario, pilote la carte de SanctiMaps et la filme.">
+<link rel="icon" href="https://sanctimaps.fr/favicon.ico">
+<link rel="stylesheet" href="studio/studio.css">
+</head>
+<body>
+<header class="top">
+  <div class="mark" aria-hidden="true">✝</div>
+  <div>
+    <h1>Studio vidéo SanctiMaps</h1>
+    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme.</div>
+  </div>
+</header>
+
+<main>
+  <section class="controls">
+    <div class="card">
+      <h2>Votre vidéo</h2>
+      <textarea id="request" aria-label="Description de la vidéo">Fais une vidéo de 45 secondes qui commence avec une vue du monde, descend progressivement vers la France, puis Paris, affiche la fiche du saint sélectionné et revient progressivement à une vue de la France.</textarea>
+      <div class="chips" aria-label="Exemples">
+        <button data-example="Fais-moi une vidéo de 30 secondes sur les saints en France.">France, 30 s</button>
+        <button data-example="Crée une vidéo verticale de 60 secondes présentant les saints de France. Commence par le monde, rapproche-toi progressivement de la France, montre plusieurs zones puis termine avec une fiche intéressante.">Vertical, 60 s</button>
+        <button data-example="Une vidéo cinématique de 40 secondes : les saints du XIIe siècle en Italie, puis passe en mode apparitions et montre Lourdes.">Italie et Lourdes</button>
+        <button data-example="Vidéo carrée de 25 secondes : cherche saint Louis puis montre les saints fêtés aujourd'hui.">Saint Louis</button>
+      </div>
+      <div class="row">
+        <label class="field">Format
+          <select id="aspect"><option value="16:9">16:9 horizontal</option><option value="9:16">9:16 vertical</option><option value="1:1">1:1 carré</option></select>
+        </label>
+        <label class="field">Style
+          <select id="style">
+            <option value="documentary">Documentaire</option><option value="cinematic">Cinématique</option>
+            <option value="educational">Pédagogique</option><option value="slow">Lent</option><option value="fast">Rapide</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <button id="plan">Préparer</button>
+        <button id="play">Lire</button>
+      </div>
+      <div class="row">
+        <button id="shoot" class="primary">Tourner la vidéo</button>
+        <button id="stop" disabled>Arrêter</button>
+      </div>
+      <p class="hint" id="rec-hint"></p>
+    </div>
+
+    <div class="card">
+      <h2>Scénario <span id="total" style="text-transform:none;letter-spacing:0"></span></h2>
+      <ol class="timeline" id="timeline"><li><span class="t"></span><span>Cliquez sur « Préparer » pour voir le découpage.</span><span></span></li></ol>
+      <p class="notes" id="notes"></p>
+    </div>
+
+    <div class="card">
+      <h2>Piloter la carte</h2>
+      <div class="cmd"><input type="text" id="cmd" placeholder="Va en France · Zoome sur Paris · Cherche saint Louis" aria-label="Commande"><button id="cmd-go">OK</button></div>
+      <div class="chips">
+        <button data-cmd="Va en France">Va en France</button>
+        <button data-cmd="Zoome sur Paris">Zoome sur Paris</button>
+        <button data-cmd="Cherche saint Louis">Cherche saint Louis</button>
+        <button data-cmd="Ouvre sa fiche">Ouvre sa fiche</button>
+        <button data-cmd="Fais un zoom arrière">Zoom arrière</button>
+        <button data-cmd="Montre-moi les saints du XIIe siècle">XIIe siècle</button>
+        <button data-cmd="Montre les saints fêtés aujourd'hui">Fêtés aujourd'hui</button>
+        <button data-cmd="Passe en mode apparitions">Apparitions</button>
+        <button data-cmd="Reviens au monde">Monde</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="stage-wrap" id="stage-wrap">
+      <div class="stage" id="stage"></div>
+      <div class="overlay" id="overlay"></div>
+    </div>
+    <div class="status"><span id="state">État : chargement</span><span id="memory"></span></div>
+    <div class="card result after" id="result" hidden></div>
+    <div class="card after" style="margin-top:12px">
+      <h2>Journal</h2>
+      <div class="log" id="log"></div>
+    </div>
+  </section>
+</main>
+
+<script type="module" src="studio/app.js"></script>
+</body>
+</html>
