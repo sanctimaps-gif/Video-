@@ -34,6 +34,7 @@ ACTIONS = {
     "search_list": "Recherche",
     "close_panel": "Fermeture du panneau",
     "frame_view": "Cadrage montré à la main",
+    "open_list_item": "Fiche choisie dans la liste",
 }
 
 

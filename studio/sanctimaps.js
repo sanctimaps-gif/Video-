@@ -638,7 +638,38 @@ export class SanctiMaps {
     }
     return new Report('fiche', false, 'croix non visible');
   }
+  /** Les fiches de la liste affichée à l'écran : saint du jour, recherche, ou « N saints ici ». */
+  visibleList() {
+    const panel = this.q('#panel.is-open');
+    const rows = [];
+    if (panel) {
+      for (const r of panel.querySelectorAll('.daily .results .result, .search .results .result')) {
+        rows.push({ el: r, name: r.querySelector('.result__name')?.textContent.trim() || '', kind: 'result' });
+      }
+    }
+    for (const r of this.D.querySelectorAll('.picker.is-open .picker__item')) {
+      rows.push({ el: r, name: r.querySelector('.picker__name')?.textContent.trim() || '', kind: 'picker' });
+    }
+    return rows.map((r, index) => ({ ...r, index }));
+  }
+
+  /** Touche une fiche dans la liste déjà ouverte, sans passer par la barre de recherche. */
+  async openFromList({ name, index } = {}) {
+    const rows = this.visibleList();
+    if (!rows.length) return new Report('liste', false, 'aucune liste de saints ouverte');
+    let chosen = name ? rows.find((r) => fold(r.name) === fold(name)) : null;
+    if (!chosen && name) chosen = rows.find((r) => fold(r.name).includes(fold(name)));
+    if (!chosen && Number.isInteger(index)) chosen = rows[index < 0 ? rows.length + index : index];
+    if (!chosen) return new Report('liste', false, `« ${name ?? index + 1} » n'est pas dans la liste affichée`);
+    return this.openResult(chosen);
+  }
+
+  /** Ouvre une fiche par le chemin le plus court : liste affichée, croix visible, sinon recherche. */
   async openSaint(name) {
+    if (this.visibleList().some((r) => fold(r.name) === fold(name))) {
+      const fromList = await this.openFromList({ name });
+      if (fromList.ok) return fromList;
+    }
     const onMap = await this.openSaintOnMap(name);
     return onMap.ok ? onMap : this.searchSaint(name);
   }

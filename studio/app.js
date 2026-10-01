@@ -368,6 +368,20 @@ async function command(text) {
     return done(await sm.showProfile(), shots);
   }
 
+  // Une fiche de la liste affichée (saint du jour, recherche, « N saints ici »)
+  const ORD = { premier: 0, premiere: 0, '1er': 0, '1re': 0, deuxieme: 1, second: 1, seconde: 1, troisieme: 2, quatrieme: 3,
+    cinquieme: 4, sixieme: 5, septieme: 6, huitieme: 7, neuvieme: 8, dixieme: 9, dernier: -1, derniere: -1 };
+  if ((m = /\bouvre (?:le |la )?(premier|premiere|1er|1re|deuxieme|second|seconde|troisieme|quatrieme|cinquieme|sixieme|septieme|huitieme|neuvieme|dixieme|dernier|derniere|\d+)(?:e|eme)?\b/.exec(t))
+      && sm.visibleList().length) {
+    const index = m[1] in ORD ? ORD[m[1]] : parseInt(m[1], 10) - 1;
+    const r = await sm.openFromList({ index });
+    return done(r, [{ action: 'open_list_item', params: { name: sm.memory.saint, index } }]);
+  }
+  if ((m = /^(?:ouvre|touche|choisis|clique sur)\s+(.+)$/i.exec(clean)) && sm.visibleList().some((row) => fold(row.name).includes(fold(m[1].replace(/^(saint|sainte)\s+/i, ''))))) {
+    const r = await sm.openFromList({ name: m[1].replace(/^(saint|sainte)\s+/i, '') });
+    return done(r, [{ action: 'open_list_item', params: { name: sm.memory.saint } }]);
+  }
+
   // Siècles, dates, recherche
   if (/\bsiecle\b/.test(t)) {
     const c = parseCentury(text);

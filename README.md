@@ -14,7 +14,8 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   Un zoom ou un déplacement fait à la main devient un « cadrage » exact, rejoué tel quel.
 * **Commandes** (« Toutes les commandes » dans le studio) : continents, pays, villes, points
   cardinaux, zoom avant/fort/arrière, vue du pays, remonter d'un niveau, monde ; recherche d'un
-  saint, croix la plus proche, lecture de la fiche, lieux marqués, saints croisés ; siècles
+  saint, croix la plus proche, saint choisi dans la liste affichée (« Ouvre le premier saint de la
+  liste », « Ouvre Remi de Reims »), lecture de la fiche, lieux marqués, saints croisés ; siècles
   (avec pays), saints nés à…, fêtes (aujourd'hui, demain, une date) ; apparitions (dans un
   pays), miracles, saints ; pauses.
 * **« Enregistrer la vidéo (MP4) »** — iPhone, iPad et ordinateur : la vidéo est fabriquée

@@ -71,6 +71,7 @@ export class Director {
         const r = await sm.pan(p.direction || 'east', p.fraction || 0.3);
         return new Report('déplacement', r.ok, r.ok ? '' : 'borné par le site');
       }
+      case 'open_list_item': return this.attempt('fiche', [() => sm.openFromList({ name: p.name, index: p.index }), () => (p.name ? sm.openSaint(p.name) : sm.openFromList({ index: p.index }))]);
       case 'level_up': return sm.levelUp();
       case 'miracles_on': return sm.setCorpus('miracles');
       case 'show_lieux': return sm.ficheButton('lieux');

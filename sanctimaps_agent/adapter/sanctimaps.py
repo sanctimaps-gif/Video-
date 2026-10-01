@@ -729,6 +729,45 @@ class SanctiMapsAdapter:
         summary = await self.page.evaluate("() => (document.querySelector('.search .results__summary') || {}).textContent || ''")
         return ActionReport("search_list", bool(results), f"« {query} » : {summary}", {"results": results[:20]})
 
+    async def visible_list(self) -> list[dict]:
+        """Les fiches de la liste affichée : saint du jour, recherche, ou « N saints ici »."""
+        return await self.page.evaluate(
+            """() => { const rows = []; const panel = document.querySelector('#panel.is-open');
+              if (panel) for (const r of panel.querySelectorAll('.daily .results .result, .search .results .result'))
+                rows.push({ sel: 'result', name: (r.querySelector('.result__name') || {}).textContent?.trim() || '' });
+              for (const r of document.querySelectorAll('.picker.is-open .picker__item'))
+                rows.push({ sel: 'picker', name: (r.querySelector('.picker__name') || {}).textContent?.trim() || '' });
+              return rows.map((r, i) => ({ ...r, index: i })); }""")
+
+    async def open_from_list(self, name: str | None = None, index: int | None = None) -> ActionReport:
+        """Touche une fiche dans la liste déjà ouverte, sans passer par la barre de recherche."""
+        rows = await self.visible_list()
+        if not rows:
+            return ActionReport("open_list_item", False, "aucune liste de saints ouverte")
+        chosen = None
+        if name:
+            chosen = next((r for r in rows if fold(r["name"]) == fold(name)), None) \
+                or next((r for r in rows if fold(name) in fold(r["name"])), None)
+        if chosen is None and index is not None and -len(rows) <= index < len(rows):
+            chosen = rows[index]
+        if chosen is None:
+            return ActionReport("open_list_item", False, f"« {name} » n'est pas dans la liste affichée")
+        # Même ordre que visible_list : d'abord les lignes du panneau, puis la liste de la carte.
+        locator = self.page.locator("#panel.is-open .daily .results .result, #panel.is-open .search .results .result, "
+                                    ".picker.is-open .picker__item").nth(chosen["index"])
+        await locator.scroll_into_view_if_needed()
+        await self.stage.hold(0.3)
+        await self.map.site_transition(lambda: locator.click())
+        try:
+            await self.sync.wait_until_panel_open()
+        except SyncTimeout:
+            return ActionReport("open_list_item", False, "la fiche ne s'est pas ouverte")
+        snap = await self.state()
+        ok = fold(snap.fiche_name or "") == fold(chosen["name"])
+        if ok:
+            self.memory.selected_saint = snap.fiche_name
+        return ActionReport("open_list_item", ok, f"fiche « {snap.fiche_name} » (depuis la liste)")
+
     async def frame_view(self, x: float, y: float, ratio: float, country: str | None) -> ActionReport:
         """Retrouve un cadrage montré à la main dans le studio."""
         if (await self.state()).raw.get("ficheOpen"):

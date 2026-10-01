@@ -182,9 +182,15 @@ class ShotExecutor:
             query = p.get("resolved") or p.get("query")
             if act == "open_marker" or not query or query.startswith("@"):
                 return await resilient(act, [a.open_cluster_near_center], self.max_attempts)
-            return await resilient(act, [lambda: self.open_saint_on_map(query),
+            async def from_list():
+                rows = await a.visible_list()
+                if not any(fold(r["name"]) == fold(query) for r in rows):
+                    return ActionReport("open_saint", False, "pas dans la liste affichée")
+                return await a.open_from_list(name=query)
+            # Le chemin le plus court : la liste déjà ouverte, la croix visible, puis la recherche.
+            return await resilient(act, [from_list, lambda: self.open_saint_on_map(query),
                                          lambda: a.search_saint(query),
-                                         lambda: a.search_saint(query.split()[0])], self.max_attempts)
+                                         lambda: a.search_saint(query.split()[0])], self.max_attempts + 1)
 
         if act == "show_profile":
             return await resilient(act, [lambda: a.show_profile(max(1.0, shot.duration_s * 0.8))], 1)
@@ -211,6 +217,11 @@ class ShotExecutor:
         if act == "open_apparition":
             return await resilient(act, [lambda: self.app.select_apparition(p.get("name"))], self.max_attempts)
 
+        if act == "open_list_item":
+            idx = p.get("index")
+            return await resilient(act, [lambda: a.open_from_list(p.get("name"), idx if isinstance(idx, int) else None),
+                                         lambda: a.search_saint(p["name"]) if p.get("name") else a.open_from_list(None, idx)],
+                                   self.max_attempts)
         if act == "level_up":
             return await resilient(act, [a.level_up], self.max_attempts)
         if act == "miracles_on":

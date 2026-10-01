@@ -292,6 +292,7 @@ class ScenarioPlanner:
             "search_list": 12 / style.typing_chars_per_s + 1.5,
             "close_panel": 0.6,
             "frame_view": 1.6 + 2.6 * style.zoom_s_per_doubling + style.settle_s,
+            "open_list_item": t + 1,
         }[action]
 
     def schedule(self, intents: list[Intent], style_name: str, target_s: float | None) -> tuple[list[Shot], str, list[str]]:
