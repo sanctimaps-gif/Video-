@@ -5,11 +5,13 @@
 Le studio s'utilise directement dans le navigateur : on décrit la vidéo, il prépare
 le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en direct et la filme.
 
-* **Ordinateur (Chrome, Edge)** : « Tourner la vidéo » demande l'autorisation de filmer
-  l'onglet, enregistre la carte seule et propose le fichier à télécharger (MP4 quand le
-  navigateur sait l'écrire, WebM sinon).
-* **iPhone / iPad** : le navigateur ne peut pas se filmer lui-même ; le studio passe en plein
-  écran et l'on utilise l'enregistrement d'écran d'iOS (Centre de contrôle).
+* **« Enregistrer la vidéo (MP4) »** — iPhone, iPad et ordinateur : la vidéo est fabriquée
+  image par image sur l'appareil (30 images/s exactes, 1080p, H.264), puis proposée au
+  téléchargement ou, sur iPhone, à « Enregistrer la vidéo » dans Photos. Le rendu prend
+  quelques minutes ; la progression s'affiche sur la carte. Nécessite iOS 16.4+ ou un
+  navigateur récent (WebCodecs).
+* **« Filmer l'onglet en direct »** (ordinateur, Chrome/Edge) : capture en temps réel de
+  la carte, plus rapide mais dépendante de la fluidité de la machine.
 
 Le studio charge à chaque fois la version actuelle de SanctiMaps (code et données servis par
 sanctimaps.fr) : rien n'est copié ni figé. Paramètres d'adresse : `?format=9:16`,

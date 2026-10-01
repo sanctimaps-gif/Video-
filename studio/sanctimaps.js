@@ -43,22 +43,52 @@ export class Report {
  * normal (1), ou ralenti pendant une transition du site.
  */
 export class Clock {
-  constructor() { this.speed = 1; this.running = false; this.win = null; this.listeners = new Set(); }
+  constructor() { this.speed = 1; this.running = false; this.win = null; this.listeners = new Set(); this.renderer = null; this.vnow = 0; }
   attach(win) { this.win = win; win.__sm.manual(true); if (!this.running) this.start(); }
+  /** Temps du studio : réel en direct, virtuel (1/30 s par image) pendant un rendu. */
+  now() { return this.renderer ? this.vnow : performance.now(); }
   start() {
     this.running = true;
     let last = performance.now();
     const loop = (t) => {
       if (!this.running) return;
       const dt = Math.min(100, t - last); last = t;
-      if (this.win?.__sm) this.win.__sm.tick(dt * this.speed);
+      if (this.win?.__sm && !this.renderer) this.win.__sm.tick(dt * this.speed);
       for (const fn of this.listeners) fn(dt);
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
   }
-  frame() { return new Promise((r) => requestAnimationFrame(() => r())); }
-  async wait(ms) { const end = performance.now() + ms; while (performance.now() < end) await this.frame(); }
+  /** Rendu image par image : ``renderer.renderFrame()`` est appelé à chaque pas. */
+  beginRender(renderer, fps = 30) { this.renderer = renderer; this.fps = fps; this.vnow = 0; }
+  endRender() { this.renderer = null; this.resumeAnimations(); }
+  resumeAnimations() {
+    for (const a of this.win?.document.getAnimations?.() || []) if (a.__smPaused) { a.__smPaused = false; try { a.play(); } catch { /* fini */ } }
+  }
+  async frame() {
+    if (!this.renderer) return new Promise((r) => requestAnimationFrame(() => r()));
+    const dt = 1000 / this.fps;
+    this.win.__sm.tick(dt * this.speed);
+    // Les transitions CSS du site avancent elles aussi d'une image exactement.
+    // Une animation arrivée au bout est terminée pour de bon : sinon elle
+    // resterait en pause, et les animations s'accumuleraient image après image.
+    for (const a of this.win.document.getAnimations?.() || []) {
+      try {
+        if (!a.__smPaused) { a.pause(); a.__smPaused = true; }
+        const end = a.effect?.getComputedTiming().endTime;
+        const next = (a.currentTime || 0) + dt;
+        if (Number.isFinite(end) && next >= end) { a.__smPaused = false; a.finish(); }
+        else a.currentTime = next;
+      } catch { /* animation terminée */ }
+    }
+    this.vnow += dt;
+    await this.renderer.renderFrame();
+    for (const fn of this.listeners) fn(dt);
+  }
+  async wait(ms) {
+    if (this.renderer) { const n = Math.max(1, Math.round(ms * this.fps / 1000)); for (let i = 0; i < n; i++) await this.frame(); return; }
+    const end = performance.now() + ms; while (performance.now() < end) await this.frame();
+  }
 }
 
 // --------------------------------------------------------------- données
@@ -347,10 +377,10 @@ export class SanctiMaps {
     seconds ??= Math.max(0.6, Math.abs(Math.log2(factor)) * this.style.zoom);
     const before = s.transform[0];
     const [ax, ay] = this.safePoint(anchor || this.center());
-    const total = Math.log(factor); let done = 0; const t0 = performance.now();
+    const total = Math.log(factor); let done = 0; const t0 = this.clock.now();
     while (true) {
       await this.clock.frame();
-      const p = Math.min(1, (performance.now() - t0) / (seconds * 1000));
+      const p = Math.min(1, (this.clock.now() - t0) / (seconds * 1000));
       const target = total * ease(p); const step = target - done; done = target;
       if (Math.abs(step) > 1e-9) this.wheel(ax, ay, -step / WHEEL_COEF);
       if (p >= 1) break;
@@ -371,10 +401,10 @@ export class SanctiMaps {
       Math.min(Math.max(cy - dy / 2, g.top + 10), g.top + g.height - 10)]);
     const before = [g.x, g.y]; const svg = this.q('svg.map');
     this.pointer('pointerdown', sx, sy, svg);
-    const t0 = performance.now(); let p = 0;
+    const t0 = this.clock.now(); let p = 0;
     while (p < 1) {
       await this.clock.frame();
-      p = Math.min(1, (performance.now() - t0) / (seconds * 1000));
+      p = Math.min(1, (this.clock.now() - t0) / (seconds * 1000));
       let mx = dx * ease(p), my = dy * ease(p);
       if (Math.hypot(mx, my) < 5 && p < 1) { mx = dx / dist * 5; my = dy / dist * 5; }
       this.pointer('pointermove', sx + mx, sy + my, svg);
@@ -631,9 +661,9 @@ export class SanctiMaps {
     await this.clock.wait(seconds * 350);
     const overflow = body ? body.scrollHeight - body.clientHeight : 0;
     if (overflow > 20) {
-      const distance = Math.min(overflow, body.clientHeight * 1.2); const t0 = performance.now();
+      const distance = Math.min(overflow, body.clientHeight * 1.2); const t0 = this.clock.now();
       let q = 0;
-      while (q < 1) { await this.clock.frame(); q = Math.min(1, (performance.now() - t0) / (seconds * 500)); body.scrollTop = distance * ease(q); }
+      while (q < 1) { await this.clock.frame(); q = Math.min(1, (this.clock.now() - t0) / (seconds * 500)); body.scrollTop = distance * ease(q); }
       await this.clock.wait(seconds * 150);
     } else await this.clock.wait(seconds * 650);
     return new Report('lecture', true, p.title || '', { profile: p });

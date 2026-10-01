@@ -2,17 +2,20 @@ import { Clock, SanctiMaps, SiteData, fold } from './sanctimaps.js';
 import { Planner, STYLES, parseCentury, total } from './planner.js';
 import { Director } from './director.js';
 import { StageRecorder, canRecord } from './recorder.js';
+import { FrameRenderer, canRender } from './render.js';
 
 const params = new URLSearchParams(location.search);
 const SRC = params.get('src') || 'https://sanctimaps.fr/';
 const LOGICAL = { '16:9': [1600, 900], '9:16': [900, 1600], '1:1': [1000, 1000] };
+const OUTPUT = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080] };
 const $ = (s) => document.querySelector(s);
 
 const ui = {
   request: $('#request'), aspect: $('#aspect'), style: $('#style'), plan: $('#plan'), shoot: $('#shoot'), play: $('#play'),
   stop: $('#stop'), timeline: $('#timeline'), notes: $('#notes'), log: $('#log'), wrap: $('#stage-wrap'), stage: $('#stage'),
   overlay: $('#overlay'), state: $('#state'), memory: $('#memory'), result: $('#result'), cmd: $('#cmd'), cmdGo: $('#cmd-go'),
-  recHint: $('#rec-hint'), total: $('#total'),
+  recHint: $('#rec-hint'), total: $('#total'), capture: $('#capture'), progress: $('#progress'),
+  progressFill: $('#progress-fill'), progressText: $('#progress-text'),
 };
 
 const clock = new Clock();
@@ -23,7 +26,7 @@ function log(line) { ui.log.textContent += line + '\n'; ui.log.scrollTop = ui.lo
 function overlay(html) { ui.overlay.innerHTML = html || ''; ui.overlay.classList.toggle('on', !!html); }
 function setBusy(b) {
   busy = b;
-  for (const el of [ui.plan, ui.shoot, ui.play, ui.cmdGo]) el.disabled = b;
+  for (const el of [ui.plan, ui.shoot, ui.play, ui.cmdGo, ui.capture]) el.disabled = b;
   ui.stop.disabled = !b;
 }
 
@@ -124,7 +127,7 @@ async function countdown(n, text) {
   overlay('');
 }
 
-async function shoot() {
+async function captureTab() {
   if (busy) return;
   setBusy(true);
   let recorder = null;
@@ -173,13 +176,70 @@ async function shoot() {
   }
 }
 
+async function renderVideo() {
+  if (busy) return;
+  if (!canRender()) {
+    log("Ce navigateur ne sait pas fabriquer la vidéo (WebCodecs absent : iOS 16.4 ou plus récent requis). Passage en mode plein écran.");
+    return captureTab();
+  }
+  setBusy(true);
+  let renderer = null, wakeLock = null;
+  try {
+    // Un rendu dure quelques minutes : l'écran ne doit pas se mettre en veille.
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* pas de verrou : tant pis */ }
+    if (!scenario || scenario.request !== ui.request.value.trim()) await plan();
+    if (!scenario) return;
+    if (!(await rehearse())) { log('Aucun plan réalisable.'); return; }
+    await loadStage();
+    for (const s of scenario.shots) markShot(s.id, null, null);
+    const [w, h] = OUTPUT[ui.aspect.value];
+    renderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30 });
+    await renderer.start();
+    const expected = total(scenario);
+    ui.progress.hidden = false;
+    const onFrame = () => {
+      const t = renderer.frames / 30;
+      ui.progressFill.style.width = `${Math.min(100, (t / expected) * 100)}%`;
+      ui.progressText.textContent = `Rendu ${t.toFixed(1)} / ${expected.toFixed(0)} s`;
+    };
+    clock.listeners.add(onFrame);
+    clock.beginRender(renderer, 30);
+    const started = performance.now();
+    try {
+      await clock.wait(300);
+      await director.play(scenario);
+      await clock.wait(300);
+    } finally {
+      clock.endRender(); clock.listeners.delete(onFrame);
+    }
+    ui.progressText.textContent = 'Finalisation du MP4…';
+    const out = await renderer.finish();
+    log(`Vidéo rendue : ${out.seconds.toFixed(1)} s, ${w}×${h}, ${out.codec === 'avc' ? 'H.264' : 'VP9'}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte ${out.stats.mapMs.toFixed(0)} ms/image, interface ${out.stats.overlayRenders}× ${out.stats.overlayMs.toFixed(0)} ms).`);
+    showResult(out);
+  } catch (e) {
+    renderer?.abort(); clock.endRender();
+    log(`Échec : ${e.message}`); overlay('');
+  } finally {
+    wakeLock?.release().catch(() => {});
+    ui.progress.hidden = true;
+    setBusy(false);
+  }
+}
+
 function showResult({ blob, ext }) {
   const url = URL.createObjectURL(blob);
   const name = `sanctimaps-${ui.aspect.value.replace(':', 'x')}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.${ext}`;
+  const file = new File([blob], name, { type: blob.type });
+  const shareable = !!navigator.canShare?.({ files: [file] });
   ui.result.innerHTML = `<h2>Vidéo</h2><video controls playsinline></video>
-    <div class="row"><a class="dl" download="${name}"><button class="primary" style="width:100%">Télécharger (${ext.toUpperCase()}, ${(blob.size / 1e6).toFixed(1)} Mo)</button></a></div>`;
+    <div class="actions">
+      ${shareable ? '<button class="primary share">Enregistrer / partager</button>' : ''}
+      <a class="dl" download="${name}"><button class="${shareable ? '' : 'primary'}">Télécharger (${ext.toUpperCase()}, ${(blob.size / 1e6).toFixed(1)} Mo)</button></a>
+    </div>
+    <p class="hint">${shareable ? 'Sur iPhone : « Enregistrer / partager » puis « Enregistrer la vidéo » pour la mettre dans Photos.' : ''}</p>`;
   ui.result.querySelector('video').src = url;
   ui.result.querySelector('a.dl').href = url;
+  ui.result.querySelector('.share')?.addEventListener('click', () => navigator.share({ files: [file], title: 'SanctiMaps' }).catch(() => {}));
   ui.result.hidden = false;
   ui.result.scrollIntoView({ behavior: 'smooth' });
 }
@@ -255,7 +315,9 @@ clock.listeners.add(() => {
 // --------------------------------------------------------------- départ
 
 ui.plan.addEventListener('click', async () => { if (busy) return; setBusy(true); try { await plan(); } finally { setBusy(false); } });
-ui.shoot.addEventListener('click', shoot);
+ui.shoot.addEventListener('click', renderVideo);
+ui.capture.addEventListener('click', captureTab);
+ui.capture.hidden = !canRecord();
 ui.play.addEventListener('click', playOnly);
 ui.stop.addEventListener('click', () => director?.stop());
 ui.aspect.addEventListener('change', async () => { if (!busy) { setBusy(true); try { await loadStage(); if (scenario) scenario.aspect = ui.aspect.value, renderTimeline(); } finally { setBusy(false); } } });
@@ -270,9 +332,9 @@ if (params.get('demande')) ui.request.value = params.get('demande');
 if (params.get('format') && LOGICAL[params.get('format')]) ui.aspect.value = params.get('format');
 else if (!canRecord() && innerHeight > innerWidth) ui.aspect.value = '9:16';
 
-ui.recHint.textContent = canRecord()
-  ? 'Le navigateur demandera l\'autorisation de filmer cet onglet : choisissez « Cet onglet ». La vidéo est rognée à la carte quand le navigateur le permet.'
-  : 'Sur iPhone et iPad, le navigateur ne peut pas se filmer lui-même : « Tourner » passe en plein écran, lancez alors l\'enregistrement de l\'écran depuis le Centre de contrôle.';
+ui.recHint.textContent = canRender()
+  ? 'La vidéo est fabriquée image par image sur cet appareil (30 images/s, MP4), puis proposée à l\'enregistrement. Comptez quelques minutes ; gardez la page ouverte pendant le rendu.'
+  : 'Ce navigateur ne sait pas fabriquer de vidéo (iOS 16.4 ou plus récent requis) : le bouton passe en plein écran pour l\'enregistrement de l\'écran.';
 
 (async () => {
   setBusy(true);

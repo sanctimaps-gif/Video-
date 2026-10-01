@@ -80,15 +80,15 @@ export class Director {
     for (const shot of scenario.shots) {
       if (this.stopped) break;
       this.hooks.onShot?.(shot, rehearsal);
-      const t0 = performance.now();
+      const t0 = this.sm.clock.now();
       let rep;
       try { rep = await this.run(shot); } catch (e) { rep = new Report(shot.action, false, e.message); }
       reports[shot.id] = rep;
       if (!rehearsal) {
-        const left = shot.duration * 1000 - (performance.now() - t0);
+        const left = shot.duration * 1000 - (this.sm.clock.now() - t0);
         if (left > 0) await this.sm.clock.wait(left);
       }
-      this.hooks.onReport?.(shot, rep, rehearsal, (performance.now() - t0) / 1000);
+      this.hooks.onReport?.(shot, rep, rehearsal, (this.sm.clock.now() - t0) / 1000);
     }
     return reports;
   }

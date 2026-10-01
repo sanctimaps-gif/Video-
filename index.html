@@ -44,7 +44,10 @@
         <button id="play">Lire</button>
       </div>
       <div class="row">
-        <button id="shoot" class="primary">Tourner la vidéo</button>
+        <button id="shoot" class="primary">Enregistrer la vidéo (MP4)</button>
+      </div>
+      <div class="row">
+        <button id="capture" hidden>Filmer l'onglet en direct</button>
         <button id="stop" disabled>Arrêter</button>
       </div>
       <p class="hint" id="rec-hint"></p>
@@ -77,6 +80,7 @@
     <div class="stage-wrap" id="stage-wrap">
       <div class="stage" id="stage"></div>
       <div class="overlay" id="overlay"></div>
+      <div class="progress" id="progress" hidden><div class="progress__bar"><span id="progress-fill"></span></div><span id="progress-text"></span></div>
     </div>
     <div class="status"><span id="state">État : chargement</span><span id="memory"></span></div>
     <div class="card result after" id="result" hidden></div>
