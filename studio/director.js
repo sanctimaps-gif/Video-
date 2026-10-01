@@ -67,6 +67,10 @@ export class Director {
       case 'apparitions_on': return sm.setCorpus('apparitions');
       case 'apparitions_off': return sm.setCorpus('saints');
       case 'open_apparition': return sm.openApparition(p.name);
+      case 'pan': {
+        const r = await sm.pan(p.direction || 'east', p.fraction || 0.3);
+        return new Report('déplacement', r.ok, r.ok ? '' : 'borné par le site');
+      }
       case 'hold': return new Report('pause', true);
       default: return new Report(shot.action, false, 'action inconnue');
     }

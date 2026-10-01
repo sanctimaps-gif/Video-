@@ -1,0 +1,98 @@
+# Rendu des vidéos en arrière-plan.
+#
+# Le studio (https://sanctimaps-gif.github.io/Video-/) prépare une issue dont le
+# titre commence par « [vidéo] » et dont le corps contient le scénario (JSON).
+# Ce workflow tourne la vidéo image par image avec l'agent Python, contre
+# sanctimaps.fr, la publie en « release » et répond dans l'issue avec le lien :
+# GitHub envoie alors une notification. Le téléphone peut être éteint entre-temps.
+
+name: Rendu vidéo
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scénario au format du studio (JSON)"
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: rendu-video
+  cancel-in-progress: false
+
+jobs:
+  render:
+    # Seules les demandes du propriétaire du dépôt lancent un rendu.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.event.issue.title, '[vidéo]') && github.event.issue.user.login == github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Accusé de réception
+        if: github.event_name == 'issues'
+        run: |
+          gh issue comment "$ISSUE" --body "🎬 Rendu lancé. Vous recevrez une réponse ici avec le lien de la vidéo (environ 5 à 15 minutes). [Suivre le rendu]($RUN_URL)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Installation
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Scénario
+        # Le corps de l'issue passe par une variable d'environnement : il est lu
+        # comme des données par Python, jamais interprété par le shell.
+        env:
+          BODY: ${{ github.event.issue.body }}
+          INPUT: ${{ inputs.scenario }}
+        run: printf '%s' "${BODY:-$INPUT}" > scenario.md
+
+      - name: Rendu
+        run: |
+          python -m sanctimaps_agent --no-ai --work-dir runs -v render scenario.md --out video/sanctimaps.mp4 2>&1 | tee rendu.log
+          ASPECT=$(python -c "from sanctimaps_agent.studio_format import extract_json; print(extract_json(open('scenario.md').read()).get('aspect','16:9').replace(':','x'))")
+          mv video/sanctimaps.mp4 "video/sanctimaps-${ASPECT}.mp4"
+
+      - name: Publication
+        run: |
+          TAG="rendu-${ISSUE:-manuel}-${GITHUB_RUN_ID}"
+          FILE=$(ls video/*.mp4)
+          NAME=$(basename "$FILE")
+          { echo "Vidéo tournée par l'agent SanctiMaps."; echo; echo '```'; grep -v "^INFO" rendu.log | tail -40; echo '```'; } > notes.md
+          gh release create "$TAG" "$FILE" --title "Vidéo SanctiMaps — ${ISSUE:+demande #$ISSUE}" --notes-file notes.md
+          URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/${NAME}"
+          echo "URL=$URL" >> "$GITHUB_ENV"
+          echo "### [Télécharger la vidéo]($URL)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Réponse
+        if: github.event_name == 'issues'
+        run: |
+          { echo "✅ La vidéo est prête : **[télécharger la vidéo]($URL)**"; echo;
+            echo "Sur iPhone : ouvrez le lien, touchez le bouton de partage puis « Enregistrer la vidéo »."; echo;
+            echo "<details><summary>Compte rendu du tournage</summary>"; echo; echo '```';
+            grep -v "^INFO" rendu.log | tail -40; echo '```'; echo "</details>"; } > reponse.md
+          gh issue comment "$ISSUE" --body-file reponse.md
+          gh issue close "$ISSUE"
+
+      - name: Échec
+        if: failure() && github.event_name == 'issues'
+        run: |
+          { echo "❌ Le rendu a échoué. [Journal complet]($RUN_URL)"; echo; echo '```';
+            tail -30 rendu.log 2>/dev/null || echo "(pas de journal)"; echo '```'; } > echec.md
+          gh issue comment "$ISSUE" --body-file echec.md

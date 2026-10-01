@@ -44,7 +44,12 @@
         <button id="play">Lire</button>
       </div>
       <div class="row">
-        <button id="shoot" class="primary">Enregistrer la vidéo (MP4)</button>
+        <button id="background" class="primary">Rendre en arrière-plan</button>
+      </div>
+      <p class="hint">Recommandé sur iPhone : la vidéo est tournée sur GitHub, vous pouvez fermer la page. Le lien arrive en notification.</p>
+      <div class="card result" id="bg-result" hidden></div>
+      <div class="row">
+        <button id="shoot">Enregistrer sur cet appareil</button>
       </div>
       <div class="row">
         <button id="capture" hidden>Filmer l'onglet en direct</button>
@@ -55,13 +60,19 @@
 
     <div class="card">
       <h2>Scénario <span id="total" style="text-transform:none;letter-spacing:0"></span></h2>
-      <ol class="timeline" id="timeline"><li><span class="t"></span><span>Cliquez sur « Préparer » pour voir le découpage.</span><span></span></li></ol>
+      <ol class="timeline" id="timeline"></ol>
       <p class="notes" id="notes"></p>
+      <p class="hint">« Préparer » écrit le scénario à partir de votre texte. Vous pouvez ensuite changer la durée d'un plan, le déplacer (↑ ↓) ou le supprimer (✕), et ajouter des actions testées dans « Piloter la carte ».</p>
+      <div class="row">
+        <button id="add-pause">＋ Pause</button>
+        <button id="clear">Vider</button>
+      </div>
     </div>
 
     <div class="card">
       <h2>Piloter la carte</h2>
-      <div class="cmd"><input type="text" id="cmd" placeholder="Va en France · Zoome sur Paris · Cherche saint Louis" aria-label="Commande"><button id="cmd-go">OK</button></div>
+      <div class="cmd"><input type="text" id="cmd" placeholder="Va en France · Zoome sur Paris · Cherche saint Louis" aria-label="Commande"><button id="cmd-go">Tester</button></div>
+      <div class="cmd-result" id="cmd-result"></div>
       <div class="chips">
         <button data-cmd="Va en France">Va en France</button>
         <button data-cmd="Zoome sur Paris">Zoome sur Paris</button>
@@ -72,6 +83,8 @@
         <button data-cmd="Montre les saints fêtés aujourd'hui">Fêtés aujourd'hui</button>
         <button data-cmd="Passe en mode apparitions">Apparitions</button>
         <button data-cmd="Reviens au monde">Monde</button>
+        <button data-cmd="Va vers l'est">Vers l'est</button>
+        <button data-cmd="Ferme la fiche">Ferme la fiche</button>
       </div>
     </div>
   </section>

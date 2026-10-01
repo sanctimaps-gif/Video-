@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("do", help="exécuter des commandes à la suite")
     d.add_argument("commands", nargs="+")
 
+    r = sub.add_parser("render", help="tourner un scénario exporté par le studio (JSON, ou texte contenant ```json```)")
+    r.add_argument("scenario", help="fichier du scénario")
+    r.add_argument("--out", required=True)
+    r.add_argument("--resolution", default=None, choices=["720p", "1080p", "4k"])
+
     sub.add_parser("shell", help="mode conversationnel")
     return p
 
@@ -84,6 +89,18 @@ async def run(args) -> int:
             if confirm is None:
                 print(scenario.timeline())
             result = await agent.director.make(scenario, out=args.out, confirm=confirm)
+            print(result.summary())
+            return 0 if result.video else 1
+        if args.cmd == "render":
+            from pathlib import Path
+
+            from .studio_format import extract_json, from_studio
+
+            scenario = from_studio(extract_json(Path(args.scenario).read_text()))
+            if args.resolution and args.resolution != "1080p":
+                scenario.resolution = args.resolution
+            print(scenario.timeline())
+            result = await agent.director.make(scenario, out=args.out)
             print(result.summary())
             return 0 if result.video else 1
         if args.cmd == "do":

@@ -182,7 +182,8 @@ class CorpusData:
 def _richness(saint: dict, texts: dict) -> float:
     bio = ((texts.get(saint["id"], {}) or {}).get("bio") or {}).get("fr") or ""
     score = min(len(bio), 3000) / 100
-    score += 3 if saint.get("patronage") else 0
+    # Le patronage n'est renseigné que pour les saints les plus connus (≈ 5 % des fiches).
+    score += 8 if saint.get("patronage") else 0
     score += len(saint.get("titles") or [])
     score += 4 if saint.get("statut") == "saint" else 0
     score -= 3 if saint.get("circa") else 0

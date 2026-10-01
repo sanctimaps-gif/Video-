@@ -21,7 +21,7 @@ export const ACTIONS = {
   fit_country: 'Retour à la vue du pays', back_to_world: 'Retour à la vue mondiale', open_saint: "Fiche d'un saint",
   show_profile: 'Lecture de la fiche', close_profile: 'Fermeture de la fiche', century_filter: 'Filtre par siècle',
   calendar: 'Calendrier des fêtes', apparitions_on: 'Mode apparitions', apparitions_off: 'Retour aux saints',
-  open_apparition: "Fiche d'une apparition", hold: 'Pause',
+  open_apparition: "Fiche d'une apparition", hold: 'Pause', pan: 'Déplacement',
 };
 
 const ROMAN = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10, xi: 11, xii: 12, xiii: 13, xiv: 14,
@@ -159,7 +159,7 @@ export class Planner {
       zoom_to_place: 1.6 + 2.6 * s.zoom + s.settle, pan_to_place: 2 + s.settle, zoom_in: s.zoom + s.settle, zoom_out: s.zoom + s.settle,
       fit_country: t + s.settle, back_to_world: t + s.settle, open_saint: 10 / s.typing + t + 1, show_profile: s.hold * 1.5,
       close_profile: 0.6, century_filter: 14 / s.typing + 1.5, calendar: 1.5, apparitions_on: 1, apparitions_off: 1,
-      open_apparition: 8 / s.typing + t + 1, hold: s.hold }[action];
+      open_apparition: 8 / s.typing + t + 1, hold: s.hold, pan: 1.5 + s.settle }[action];
   }
 
   describe(it) {
@@ -167,13 +167,16 @@ export class Planner {
     switch (it.action) {
       case 'open_continent': return `Zoom progressif vers ${CONTINENT_LABEL[p.continent] || p.continent}`;
       case 'open_country': return `Descente vers ${this.data.countryName(p.country)}`;
-      case 'zoom_to_place': return `Zoom vers ${place}`;
-      case 'pan_to_place': return `Déplacement vers ${place}`;
+      case 'zoom_to_place': return `Zoom vers ${p.resolvedPlace || place}`;
+      case 'pan_to_place': return `Déplacement vers ${p.resolvedPlace || place}`;
       case 'fit_country': return `Retour à la vue de ${p.country ? this.data.countryName(p.country) : 'ce pays'}`;
-      case 'open_saint': return String(p.query).startsWith('@') ? "Fiche d'un saint" : `Fiche : ${p.query}`;
+      case 'open_saint': { const q = p.resolved || p.query; return !q || String(q).startsWith('@') ? "Fiche d'un saint" : `Fiche : ${q}`; }
       case 'century_filter': return `Saints du ${p.century}e siècle`;
       case 'calendar': return `Calendrier : ${p.day}`;
       case 'open_apparition': return `Apparition : ${p.name}`;
+      case 'pan': return `Déplacement vers le ${{ north: 'nord', south: 'sud', east: 'est', west: 'ouest' }[p.direction] || p.direction}`;
+      case 'zoom_in': return 'Zoom avant';
+      case 'zoom_out': return 'Zoom arrière';
       default: return ACTIONS[it.action];
     }
   }

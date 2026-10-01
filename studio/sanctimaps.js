@@ -153,7 +153,8 @@ export class SiteData {
   }
   richness(s, texts) {
     const bio = texts?.[s.id]?.bio?.fr || '';
-    return Math.min(bio.length, 3000) / 100 + (s.patronage ? 3 : 0) + (s.titles?.length || 0)
+    // Le patronage n'est renseigné que pour les saints les plus connus (≈ 5 % des fiches).
+    return Math.min(bio.length, 3000) / 100 + (s.patronage ? 8 : 0) + (s.titles?.length || 0)
       + (s.statut === 'saint' ? 4 : 0) - (s.circa ? 3 : 0);
   }
   async interesting(iso, place) {
