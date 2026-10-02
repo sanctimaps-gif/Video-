@@ -227,7 +227,7 @@ async function captureTab() {
       if (out) out.seconds = total(scenario);
       document.body.classList.remove('shooting'); layout();
       if (!out || out.blob.size < 20000) throw new Error(`enregistrement vide (${recorder.mime || 'format inconnu'}) : essayez Chrome ou Edge à jour`);
-      showResult(out);
+      await showResult(out);
     } else {
       document.body.classList.add('shooting'); layout();
       await countdown(5, "Lancez maintenant l'enregistrement de l'écran (Centre de contrôle).");
@@ -292,8 +292,8 @@ async function renderVideo() {
     ui.progressText.textContent = 'Finalisation du MP4…';
     const out = await renderer.finish();
     log(`Vidéo rendue : ${out.seconds.toFixed(1)} s, ${w}×${h}, ${out.codec === 'avc' ? 'H.264' : 'VP9'}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte ${out.stats.mapMs.toFixed(0)} ms/image, interface ${out.stats.overlayRenders}× ${out.stats.overlayMs.toFixed(0)} ms).`);
-    showResult(out);
-    await keepAlive.finish('Vidéo prête — revenez dans Safari pour l\'enregistrer');
+    const saved = await showResult(out);
+    await keepAlive.finish(saved ? 'Vidéo prête — rangée dans la bibliothèque' : 'Vidéo prête — à enregistrer dans Safari');
   } catch (e) {
     renderer?.abort(); clock.endRender();
     log(`Échec : ${e.message}`); overlay('');
@@ -314,20 +314,41 @@ document.addEventListener('visibilitychange', () => {
   log(document.hidden ? 'Page en arrière-plan : le rendu continue.' : `De retour : ${ui.progressText.textContent || 'rendu en cours'}.`);
 });
 
-/** Une vidéo terminée : rangée dans la bibliothèque, puis montrée. */
+/**
+ * Une vidéo terminée va directement dans la bibliothèque : enregistrée tout de
+ * suite (même page en arrière-plan), puis signalée en tête de liste. Si la
+ * bibliothèque refuse (plus de place), on montre la vidéo pour l'enregistrer.
+ */
+let newestId = null;
 async function showResult(out) {
-  let item = null;
-  try {
-    const thumb = out.thumb || await thumbFromVideo(out.blob);
-    item = await library.add({ blob: out.blob, thumb, title: (scenario?.title || ui.request.value.split(/[.:]/)[0]).trim().slice(0, 80) || 'Vidéo SanctiMaps',
-      seconds: out.seconds, aspect: ui.aspect.value, codec: out.codec, ext: out.ext, scenario });
-    log(`Vidéo rangée dans la bibliothèque : « ${item.title} ».`);
-    renderLibrary();
-  } catch (e) {
-    log(`La vidéo n'a pas pu être rangée dans la bibliothèque (${e.message}) : enregistrez-la maintenant.`);
-    item = { id: null, blob: out.blob, ext: out.ext, title: 'Vidéo SanctiMaps', created: Date.now(), size: out.blob.size };
+  let item = null, lastError = null;
+  const thumb = out.thumb || await thumbFromVideo(out.blob);
+  for (let i = 0; i < 3 && !item; i++) {
+    try {
+      item = await library.add({ blob: out.blob, thumb, title: (scenario?.title || ui.request.value.split(/[.:]/)[0]).trim().slice(0, 80) || 'Vidéo SanctiMaps',
+        seconds: out.seconds, aspect: ui.aspect.value, codec: out.codec, ext: out.ext, scenario });
+    } catch (e) { lastError = e; await new Promise((r) => setTimeout(r, 500)); }
   }
-  playItem(item);
+  if (!item) {
+    log(`La vidéo n'a pas pu être rangée dans la bibliothèque (${lastError?.message}) : enregistrez-la maintenant.`);
+    playItem({ id: null, blob: out.blob, ext: out.ext, title: 'Vidéo SanctiMaps', created: Date.now(), size: out.blob.size });
+    return null;
+  }
+  newestId = item.id;
+  log(`Vidéo rangée dans la bibliothèque : « ${item.title} ».`);
+  await renderLibrary();
+  revealNewest();
+  return item;
+}
+
+/** Montre la dernière vidéo en tête de bibliothèque — tout de suite, ou au retour dans Safari. */
+function revealNewest() {
+  if (!newestId) return;
+  if (document.hidden) { document.addEventListener('visibilitychange', revealNewest, { once: true }); return; }
+  const li = ui.libList.querySelector(`[data-id="${newestId}"]`);
+  (li || ui.library).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  li?.classList.add('is-flash');
+  setTimeout(() => li?.classList.remove('is-flash'), 2500);
 }
 
 /** Lecteur et boutons d'une vidéo de la bibliothèque. */
@@ -384,12 +405,13 @@ async function renderLibrary() {
     : 'Aucune vidéo pour l’instant : chaque vidéo enregistrée viendra se ranger ici.';
   ui.libList.replaceChildren();
   for (const item of items) {
-    const li = document.createElement('li'); li.className = 'lib-item';
+    const li = document.createElement('li'); li.className = `lib-item${item.id === newestId ? ' is-new' : ''}`; li.dataset.id = item.id;
     const d = new Date(item.created);
     li.innerHTML = `<button class="lib-thumb" aria-label="Lire"><img alt=""><span class="lib-dur"></span></button>
       <div class="lib-info"><p class="lib-title"></p><p class="lib-meta"></p>
         <div class="lib-actions">
           <button class="mini" data-do="play">▶ Lire</button>
+          <button class="mini primary" data-do="share">Enregistrer / partager</button>
           <button class="mini" data-do="rename">Renommer</button>
           ${item.scenario ? '<button class="mini" data-do="reuse">Reprendre le scénario</button>' : ''}
           <button class="mini del" data-do="delete">Supprimer</button>
@@ -399,11 +421,18 @@ async function renderLibrary() {
     li.querySelector('.lib-thumb').classList.add(`is-${(item.aspect || '16:9').replace(':', 'x')}`);
     li.querySelector('.lib-dur').textContent = `${Math.round(item.seconds || 0)} s`;
     li.querySelector('.lib-title').textContent = item.title;
+    if (item.id === newestId) li.querySelector('.lib-title').insertAdjacentHTML('afterbegin', '<span class="lib-new">Nouvelle</span> ');
     li.querySelector('.lib-meta').textContent = `${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} · ${item.aspect || ''} · ${((item.size || 0) / 1e6).toFixed(1)} Mo`;
     li.addEventListener('click', async (e) => {
       const what = e.target.closest('[data-do]')?.dataset.do || (e.target.closest('.lib-thumb') ? 'play' : null);
       if (!what) return;
       if (what === 'play') playItem(await library.get(item.id));
+      if (what === 'share') {
+        const full = await library.get(item.id);
+        const file = new File([full.blob], fileName(full), { type: full.blob.type || 'video/mp4' });
+        if (navigator.canShare?.({ files: [file] })) navigator.share({ files: [file], title: full.title }).catch(() => {});
+        else { const a = document.createElement('a'); a.href = URL.createObjectURL(full.blob); a.download = fileName(full); a.click(); }
+      }
       if (what === 'rename') {
         const title = prompt('Nouveau titre', item.title);
         if (title && title.trim()) { await library.rename(item.id, title.trim()); renderLibrary(); }

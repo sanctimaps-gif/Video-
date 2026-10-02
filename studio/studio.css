@@ -97,3 +97,8 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .lib-title { margin: 0; font-weight: 600; }
 .lib-meta { margin: 2px 0 6px; color: var(--muted); font-size: .8rem; }
 .lib-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.lib-item.is-flash { animation: lib-flash 2.4s ease-out; }
+@keyframes lib-flash { 0%, 30% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
+.lib-new { display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  background: var(--accent); color: var(--accent-ink); border-radius: 6px; padding: 1px 6px; vertical-align: middle; }
+.lib-actions .primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
