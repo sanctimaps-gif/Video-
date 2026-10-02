@@ -773,7 +773,7 @@ if (params.get('format') && LOGICAL[params.get('format')]) ui.aspect.value = par
 else if (!canRecord() && innerHeight > innerWidth) ui.aspect.value = '9:16';
 
 ui.recHint.textContent = canRender()
-  ? 'La vidéo est fabriquée image par image sur cet appareil (30 images/s, MP4). Vous pouvez changer d\'application ou verrouiller l\'écran : la progression s\'affiche sur l\'écran verrouillé et un carillon sonne à la fin. Revenez alors dans Safari pour enregistrer la vidéo. Gardez le son du téléphone activé (le mode silencieux n\'empêche rien, mais ne fermez pas Safari).'
+  ? 'La vidéo est fabriquée image par image sur cet appareil (30 images/s, MP4). Vous pouvez changer d\'application ou verrouiller l\'écran : la progression s\'affiche sur l\'écran verrouillé et un carillon sonne à la fin. Revenez alors dans Safari pour enregistrer la vidéo. Ne fermez pas l\'onglet pendant le rendu.'
   : 'Ce navigateur ne sait pas fabriquer de vidéo (iOS 16.4 ou plus récent requis) : le bouton passe en plein écran pour l\'enregistrement de l\'écran.';
 
 restore();
