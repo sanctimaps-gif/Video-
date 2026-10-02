@@ -42,7 +42,9 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   téléphone suspend ou ferme la page** : chaque image est rangée aussitôt sur l'appareil
   (JPEG dans IndexedDB, avec l'avancement) ; une page mise en pause repart d'elle-même au
   retour, et une page fermée propose « Reprendre le rendu » — l'agent rejoue le scénario sans
-  filmer jusqu'à l'image où il s'était arrêté, puis continue. Le MP4 est assemblé à la fin à
+  filmer jusqu'à l'image où il s'était arrêté, puis continue. Le rendu est noté dès le toucher (même fermé pendant la préparation, il est
+  proposé à la reprise), et le journal des dernières secondes avant l'interruption est gardé et
+  affiché. Le MP4 est assemblé à la fin à
   partir de ces images (quelques secondes), au retour dans Safari si iOS refuse l'encodeur en
   arrière-plan, puis rangé dans la bibliothèque. Nécessite iOS 16.4+ ou un navigateur récent
   (WebCodecs).
@@ -50,7 +52,8 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   la carte, plus rapide mais dépendante de la fluidité de la machine.
 
 Le studio charge à chaque fois la version actuelle de SanctiMaps (code et données servis par
-sanctimaps.fr) : rien n'est copié ni figé. Paramètres d'adresse : `?format=9:16`,
+sanctimaps.fr) : rien n'est copié ni figé. La version affichée sous le titre change à chaque mise à jour (les modules sont rechargés
+d'office). Paramètres d'adresse : `?format=9:16`,
 `?demande=…` (texte de la demande), `?src=…` (autre instance du site).
 
 Pour des vidéos à cadence parfaite (rendu image par image, 30 i/s exacts, jusqu'en 4K),

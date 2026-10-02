@@ -14,14 +14,22 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SanctiMaps Vidéo">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="stylesheet" href="studio/studio.css">
+<link rel="stylesheet" href="studio/studio.css?v=20261002c">
 </head>
 <body>
+<div class="resume-modal" id="resume" hidden role="dialog" aria-modal="true" aria-labelledby="resume-title">
+  <div class="card">
+    <h2 id="resume-title">Rendu interrompu</h2>
+    <p id="resume-text"></p>
+    <pre class="resume-log" id="resume-log" hidden></pre>
+    <div class="row"><button id="resume-go" class="primary">Reprendre le rendu</button><button id="resume-drop">Abandonner</button></div>
+  </div>
+</div>
 <header class="top">
   <img class="logo" src="studio/icons/logo-256.png" alt="SanctiMaps.fr" width="56" height="56">
   <div>
     <h1>Studio vidéo SanctiMaps</h1>
-    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme.</div>
+    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme. <span class="version">version 2026-10-02 c</span></div>
   </div>
 </header>
 
@@ -179,11 +187,6 @@
       <div class="progress" id="progress" hidden><div class="progress__bar"><span id="progress-fill"></span></div><span id="progress-text"></span></div>
     </div>
     <div class="status"><span id="state">État : chargement</span><span id="memory"></span></div>
-    <div class="card after resume" id="resume" hidden style="margin-top:12px">
-      <h2>Rendu interrompu</h2>
-      <p id="resume-text"></p>
-      <div class="row"><button id="resume-go" class="primary">Reprendre le rendu</button><button id="resume-drop">Abandonner</button></div>
-    </div>
     <div class="card result after" id="result" hidden></div>
     <div class="card after library" id="library" style="margin-top:12px">
       <h2>Bibliothèque</h2>
@@ -198,6 +201,16 @@
   </section>
 </main>
 
-<script type="module" src="studio/app.js"></script>
+<!-- Chaque mise à jour change ce numéro : Safari recharge alors tous les modules au lieu de garder les anciens. -->
+<script type="importmap">{"imports": {
+  "./studio/director.js": "./studio/director.js?v=20261002c",
+  "./studio/keepalive.js": "./studio/keepalive.js?v=20261002c",
+  "./studio/library.js": "./studio/library.js?v=20261002c",
+  "./studio/planner.js": "./studio/planner.js?v=20261002c",
+  "./studio/recorder.js": "./studio/recorder.js?v=20261002c",
+  "./studio/render.js": "./studio/render.js?v=20261002c",
+  "./studio/sanctimaps.js": "./studio/sanctimaps.js?v=20261002c"
+}}</script>
+<script type="module" src="studio/app.js?v=20261002c"></script>
 </body>
 </html>
