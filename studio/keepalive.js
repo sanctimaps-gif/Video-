@@ -73,7 +73,9 @@ export class KeepAlive {
     this.last = now;
     if ('mediaSession' in navigator && window.MediaMetadata) {
       try {
-        navigator.mediaSession.metadata = new MediaMetadata({ title: this.title || 'SanctiMaps', artist: text, album: 'Studio vidéo SanctiMaps' });
+        navigator.mediaSession.metadata = new MediaMetadata({ title: this.title || 'SanctiMaps', artist: text, album: 'Studio vidéo SanctiMaps',
+          artwork: [{ src: new URL('studio/icons/icon-512.png', location.href).href, sizes: '512x512', type: 'image/png' },
+            { src: new URL('studio/icons/icon-192.png', location.href).href, sizes: '192x192', type: 'image/png' }] });
         navigator.mediaSession.playbackState = 'playing';
       } catch { /* sans écran de lecture */ }
     }

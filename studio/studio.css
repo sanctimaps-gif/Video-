@@ -15,8 +15,7 @@ a { color: var(--accent); }
 header.top { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 header.top h1 { font: 600 1.15rem/1.2 Georgia, "Times New Roman", serif; margin: 0; }
 header.top .sub { color: var(--muted); font-size: .85rem; }
-header.top .mark { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: var(--accent-ink);
-  display: grid; place-items: center; font-size: 1.1rem; flex: none; }
+header.top .logo { width: 56px; height: 56px; flex: none; object-fit: contain; }
 main { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 16px; padding: 16px; align-items: start; }
 @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px; } }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
