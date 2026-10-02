@@ -214,7 +214,9 @@ export class FrameRenderer {
     frame.close();
     this.frames += 1;
     // Ne pas laisser la file d'encodage grossir sur un téléphone.
-    while (this.encoder.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 5));
+    while (this.encoder.encodeQueueSize > 4) {
+      await new Promise((r) => { this.encoder.addEventListener?.('dequeue', r, { once: true }); setTimeout(r, 50); });
+    }
   }
 
   async finish() {

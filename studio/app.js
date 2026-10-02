@@ -1,4 +1,5 @@
-import { Clock, SanctiMaps, SiteData, fold } from './sanctimaps.js';
+import { Clock, DRY, SanctiMaps, SiteData, fold } from './sanctimaps.js';
+import { KeepAlive } from './keepalive.js';
 import { Planner, STYLES, parseCentury, total } from './planner.js';
 import { Director } from './director.js';
 import { StageRecorder, canRecord } from './recorder.js';
@@ -21,6 +22,8 @@ const ui = {
 };
 
 const clock = new Clock();
+const keepAlive = new KeepAlive();
+const RENDERING = 'sanctimaps-studio.rendu-en-cours';
 const data = new SiteData(SRC);
 let sm = null, director = null, scenario = null, busy = false, iframe = null;
 
@@ -52,10 +55,12 @@ async function loadStage() {
   ui.stage.replaceChildren();
   iframe = document.createElement('iframe');
   iframe.title = 'SanctiMaps';
-  iframe.src = `studio/frame.html?src=${encodeURIComponent(SRC)}`;
+  iframe.src = `studio/frame.html?vt=1&src=${encodeURIComponent(SRC)}`;
   ui.stage.append(iframe);
   layout();
   await new Promise((r) => iframe.addEventListener('load', r, { once: true }));
+  // Le studio tient l'horloge des animations dès le chargement (voir frame.html).
+  clock.attach(iframe.contentWindow);
   sm = new SanctiMaps(iframe, clock, STYLES[ui.style.value], log);
   // La page du cadre est remplacée par celle du site : on attend qu'elle soit là.
   await sm.waitFor('page SanctiMaps', () => iframe.contentDocument?.querySelector('#map-host'), 60000);
@@ -243,13 +248,18 @@ async function renderVideo() {
     log("Ce navigateur ne sait pas fabriquer la vidéo (WebCodecs absent : iOS 16.4 ou plus récent requis). Passage en mode plein écran.");
     return captureTab();
   }
+  // Tout de suite, dans le toucher : le son qui garde la page éveillée en arrière-plan.
+  keepAlive.start(`SanctiMaps — ${(scenario?.title || ui.request.value || 'vidéo').slice(0, 40)}`);
   setBusy(true);
   let renderer = null, wakeLock = null;
+  try { localStorage.setItem(RENDERING, JSON.stringify({ at: Date.now() })); } catch { /* sans stockage */ }
   try {
-    // Un rendu dure quelques minutes : l'écran ne doit pas se mettre en veille.
     try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* pas de verrou : tant pis */ }
     if (!scenario?.shots?.length) await plan();
     if (!scenario) return;
+    // Répétition et chargement au pas à pas, eux aussi : rien ne dépend de l'écran.
+    clock.beginRender(DRY, 30);
+    keepAlive.update('vérification du scénario', true);
     if (!(await rehearse())) { log('Aucun plan réalisable.'); return; }
     await loadStage();
     for (const s of scenario.shots) markShot(s.id, null, null);
@@ -260,8 +270,10 @@ async function renderVideo() {
     ui.progress.hidden = false;
     const onFrame = () => {
       const t = renderer.frames / 30;
-      ui.progressFill.style.width = `${Math.min(100, (t / expected) * 100)}%`;
+      const pct = Math.min(100, (t / expected) * 100);
+      ui.progressFill.style.width = `${pct}%`;
       ui.progressText.textContent = `Rendu ${t.toFixed(1)} / ${expected.toFixed(0)} s`;
+      keepAlive.update(`${Math.floor(pct)} % — ${t.toFixed(0)} / ${expected.toFixed(0)} s`);
     };
     clock.listeners.add(onFrame);
     clock.beginRender(renderer, 30);
@@ -277,15 +289,26 @@ async function renderVideo() {
     const out = await renderer.finish();
     log(`Vidéo rendue : ${out.seconds.toFixed(1)} s, ${w}×${h}, ${out.codec === 'avc' ? 'H.264' : 'VP9'}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte ${out.stats.mapMs.toFixed(0)} ms/image, interface ${out.stats.overlayRenders}× ${out.stats.overlayMs.toFixed(0)} ms).`);
     showResult(out);
+    await keepAlive.finish('Vidéo prête — revenez dans Safari pour l\'enregistrer');
   } catch (e) {
     renderer?.abort(); clock.endRender();
     log(`Échec : ${e.message}`); overlay('');
+    keepAlive.update('échec du rendu', true); keepAlive.stop();
   } finally {
+    clock.endRender();
+    keepAlive.stop();
+    try { localStorage.removeItem(RENDERING); } catch { /* rien */ }
     wakeLock?.release().catch(() => {});
     ui.progress.hidden = true;
     setBusy(false);
   }
 }
+
+// En arrière-plan, le journal dit où en est le rendu à chaque aller-retour.
+document.addEventListener('visibilitychange', () => {
+  if (!busy || !keepAlive.active) return;
+  log(document.hidden ? 'Page en arrière-plan : le rendu continue.' : `De retour : ${ui.progressText.textContent || 'rendu en cours'}.`);
+});
 
 function showResult({ blob, ext }) {
   const url = URL.createObjectURL(blob);
@@ -750,10 +773,16 @@ if (params.get('format') && LOGICAL[params.get('format')]) ui.aspect.value = par
 else if (!canRecord() && innerHeight > innerWidth) ui.aspect.value = '9:16';
 
 ui.recHint.textContent = canRender()
-  ? 'La vidéo est fabriquée image par image sur cet appareil (30 images/s, MP4), puis proposée à l\'enregistrement. Comptez quelques minutes ; gardez la page ouverte pendant le rendu.'
+  ? 'La vidéo est fabriquée image par image sur cet appareil (30 images/s, MP4). Vous pouvez changer d\'application ou verrouiller l\'écran : la progression s\'affiche sur l\'écran verrouillé et un carillon sonne à la fin. Revenez alors dans Safari pour enregistrer la vidéo. Gardez le son du téléphone activé (le mode silencieux n\'empêche rien, mais ne fermez pas Safari).'
   : 'Ce navigateur ne sait pas fabriquer de vidéo (iOS 16.4 ou plus récent requis) : le bouton passe en plein écran pour l\'enregistrement de l\'écran.';
 
 restore();
+try {
+  if (localStorage.getItem(RENDERING)) {
+    localStorage.removeItem(RENDERING);
+    setTimeout(() => log("Le rendu précédent a été interrompu : le téléphone a fermé la page (mémoire ou batterie). Relancez « Enregistrer la vidéo » ; le scénario est conservé."), 0);
+  }
+} catch { /* sans stockage */ }
 (async () => {
   setBusy(true);
   try {

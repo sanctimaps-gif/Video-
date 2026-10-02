@@ -29,7 +29,11 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
 * **« Enregistrer la vidéo (MP4) »** — iPhone, iPad et ordinateur : la vidéo est fabriquée
   image par image sur l'appareil (30 images/s exactes, 1080p, H.264), puis proposée au
   téléchargement ou, sur iPhone, à « Enregistrer la vidéo » dans Photos. Le rendu prend
-  quelques minutes ; la progression s'affiche sur la carte. Nécessite iOS 16.4+ ou un
+  quelques minutes. **Le rendu continue en arrière-plan** : une piste audio quasi silencieuse,
+  lancée par le toucher, garde la page éveillée quand on change d'application ou qu'on
+  verrouille l'écran ; la progression s'affiche sur l'écran verrouillé et un carillon sonne à la
+  fin. Le rendu ne dépend plus de l'affichage (horloge pas à pas, sans requestAnimationFrame),
+  et les attentes réseau ne produisent pas d'images immobiles. Nécessite iOS 16.4+ ou un
   navigateur récent (WebCodecs).
 * **« Filmer l'onglet en direct »** (ordinateur, Chrome/Edge) : capture en temps réel de
   la carte, plus rapide mais dépendante de la fluidité de la machine.

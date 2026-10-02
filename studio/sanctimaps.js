@@ -42,9 +42,17 @@ export class Report {
  * Le temps des animations de la carte avance au rythme fixé par le studio :
  * normal (1), ou ralenti pendant une transition du site.
  */
+/** Une tâche plus tard — sans requestAnimationFrame ni minuterie bridée en arrière-plan. */
+export function yieldTask() {
+  return new Promise((resolve) => { const ch = new MessageChannel(); ch.port1.onmessage = () => resolve(); ch.port2.postMessage(0); });
+}
+
+/** Rendu « à blanc » : le temps avance, rien n'est dessiné. */
+export const DRY = { renderFrame() {} };
+
 export class Clock {
   constructor() { this.speed = 1; this.running = false; this.win = null; this.listeners = new Set(); this.renderer = null; this.vnow = 0; }
-  attach(win) { this.win = win; win.__sm.manual(true); if (!this.running) this.start(); }
+  attach(win) { this.win = win; win.__sm?.manual(true); if (!this.running) this.start(); }
   /** Temps du studio : réel en direct, virtuel (1/30 s par image) pendant un rendu. */
   now() { return this.renderer ? this.vnow : performance.now(); }
   start() {
@@ -59,8 +67,13 @@ export class Clock {
     };
     requestAnimationFrame(loop);
   }
-  /** Rendu image par image : ``renderer.renderFrame()`` est appelé à chaque pas. */
-  beginRender(renderer, fps = 30) { this.renderer = renderer; this.fps = fps; this.vnow = 0; }
+  /**
+   * Rendu image par image : ``renderer.renderFrame()`` est appelé à chaque pas.
+   * Le temps n'avance plus avec l'écran (requestAnimationFrame, arrêté quand la
+   * page est en arrière-plan) mais pas à pas : le rendu continue écran éteint.
+   * ``DRY`` fait avancer le temps sans rien dessiner (répétition, chargement).
+   */
+  beginRender(renderer, fps = 30) { this.renderer = renderer; this.fps = fps; }
   endRender() { this.renderer = null; this.resumeAnimations(); }
   resumeAnimations() {
     for (const a of this.win?.document.getAnimations?.() || []) if (a.__smPaused) { a.__smPaused = false; try { a.play(); } catch { /* fini */ } }
@@ -68,6 +81,7 @@ export class Clock {
   async frame() {
     if (!this.renderer) return new Promise((r) => requestAnimationFrame(() => r()));
     const dt = 1000 / this.fps;
+    if (!this.win?.__sm) { this.vnow += dt; await yieldTask(); return; }
     this.win.__sm.tick(dt * this.speed);
     // Les transitions CSS du site avancent elles aussi d'une image exactement.
     // Une animation arrivée au bout est terminée pour de bon : sinon elle
@@ -83,7 +97,21 @@ export class Clock {
     }
     this.vnow += dt;
     await this.renderer.renderFrame();
+    // Rendre la main sans dépendre de l'écran : réseau et décodages progressent.
+    await yieldTask();
     for (const fn of this.listeners) fn(dt);
+  }
+  /**
+   * Attendre sans filmer : pendant un rendu, si rien ne s'anime sur la carte
+   * (on attend le réseau, des tuiles, une fiche), le temps de la vidéo ne
+   * s'écoule pas — pas d'images immobiles en trop. Sinon, une image.
+   */
+  async idle() {
+    if (this.renderer && this.win?.__sm && !this.win.__sm.pending()) {
+      await new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => setTimeout(r, 25); ch.port2.postMessage(0); });
+      return;
+    }
+    return this.frame();
   }
   async wait(ms) {
     if (this.renderer) { const n = Math.max(1, Math.round(ms * this.fps / 1000)); for (let i = 0; i < n; i++) await this.frame(); return; }
@@ -259,7 +287,7 @@ export class SanctiMaps {
     const end = performance.now() + timeout;
     while (performance.now() < end) {
       if (await predicate()) return true;
-      await this.clock.frame();
+      await this.clock.idle();
     }
     throw new ActionFailed(`délai dépassé : ${what}`);
   }
