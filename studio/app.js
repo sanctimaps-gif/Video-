@@ -1,5 +1,6 @@
 import { Clock, DRY, SanctiMaps, SiteData, fold } from './sanctimaps.js';
 import { KeepAlive } from './keepalive.js';
+import { Library, fileName } from './library.js';
 import { Planner, STYLES, parseCentury, total } from './planner.js';
 import { Director } from './director.js';
 import { StageRecorder, canRecord } from './recorder.js';
@@ -17,12 +18,13 @@ const ui = {
   overlay: $('#overlay'), state: $('#state'), memory: $('#memory'), result: $('#result'), cmd: $('#cmd'), cmdGo: $('#cmd-go'),
   recHint: $('#rec-hint'), total: $('#total'), capture: $('#capture'), progress: $('#progress'),
   progressFill: $('#progress-fill'), progressText: $('#progress-text'), cmdResult: $('#cmd-result'),
-  addPause: $('#add-pause'), clear: $('#clear'),
+  addPause: $('#add-pause'), clear: $('#clear'), library: $('#library'), libList: $('#library-list'), libUsage: $('#library-usage'),
   demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
 };
 
 const clock = new Clock();
 const keepAlive = new KeepAlive();
+const library = new Library();
 const RENDERING = 'sanctimaps-studio.rendu-en-cours';
 const data = new SiteData(SRC);
 let sm = null, director = null, scenario = null, busy = false, iframe = null;
@@ -164,7 +166,7 @@ async function plan() {
   if (!text) return null;
   const planner = new Planner(data, sm?.memory);
   scenario = await planner.plan(text, { aspect: ui.aspect.value, style: ui.style.value });
-  scenario.title = text.split(/[.:]/)[0].slice(0, 80);
+  scenario.title = text.split(/[.:]/)[0].trim().slice(0, 80);
   if (scenario.aspect !== ui.aspect.value) { ui.aspect.value = scenario.aspect; await loadStage(); }
   ui.style.value = scenario.style;
   renderTimeline();
@@ -222,6 +224,7 @@ async function captureTab() {
       await director.play(scenario);
       await clock.wait(300);
       const out = await recorder.stop();
+      if (out) out.seconds = total(scenario);
       document.body.classList.remove('shooting'); layout();
       if (!out || out.blob.size < 20000) throw new Error(`enregistrement vide (${recorder.mime || 'format inconnu'}) : essayez Chrome ou Edge à jour`);
       showResult(out);
@@ -267,6 +270,7 @@ async function renderVideo() {
     renderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30 });
     await renderer.start();
     const expected = total(scenario);
+    renderer.thumbAt = Math.round(expected * 30 * 0.4);
     ui.progress.hidden = false;
     const onFrame = () => {
       const t = renderer.frames / 30;
@@ -310,22 +314,116 @@ document.addEventListener('visibilitychange', () => {
   log(document.hidden ? 'Page en arrière-plan : le rendu continue.' : `De retour : ${ui.progressText.textContent || 'rendu en cours'}.`);
 });
 
-function showResult({ blob, ext }) {
-  const url = URL.createObjectURL(blob);
-  const name = `sanctimaps-${ui.aspect.value.replace(':', 'x')}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.${ext}`;
-  const file = new File([blob], name, { type: blob.type });
+/** Une vidéo terminée : rangée dans la bibliothèque, puis montrée. */
+async function showResult(out) {
+  let item = null;
+  try {
+    const thumb = out.thumb || await thumbFromVideo(out.blob);
+    item = await library.add({ blob: out.blob, thumb, title: (scenario?.title || ui.request.value.split(/[.:]/)[0]).trim().slice(0, 80) || 'Vidéo SanctiMaps',
+      seconds: out.seconds, aspect: ui.aspect.value, codec: out.codec, ext: out.ext, scenario });
+    log(`Vidéo rangée dans la bibliothèque : « ${item.title} ».`);
+    renderLibrary();
+  } catch (e) {
+    log(`La vidéo n'a pas pu être rangée dans la bibliothèque (${e.message}) : enregistrez-la maintenant.`);
+    item = { id: null, blob: out.blob, ext: out.ext, title: 'Vidéo SanctiMaps', created: Date.now(), size: out.blob.size };
+  }
+  playItem(item);
+}
+
+/** Lecteur et boutons d'une vidéo de la bibliothèque. */
+function playItem(item) {
+  const url = URL.createObjectURL(item.blob);
+  const name = fileName(item);
+  const file = new File([item.blob], name, { type: item.blob.type || 'video/mp4' });
   const shareable = !!navigator.canShare?.({ files: [file] });
-  ui.result.innerHTML = `<h2>Vidéo</h2><video controls playsinline></video>
+  ui.result.innerHTML = `<h2></h2><video controls playsinline></video>
     <div class="actions">
       ${shareable ? '<button class="primary share">Enregistrer / partager</button>' : ''}
-      <a class="dl" download="${name}"><button class="${shareable ? '' : 'primary'}">Télécharger (${ext.toUpperCase()}, ${(blob.size / 1e6).toFixed(1)} Mo)</button></a>
+      <a class="dl" download="${name}"><button class="${shareable ? '' : 'primary'}">Télécharger (${(item.ext || 'mp4').toUpperCase()}, ${(item.blob.size / 1e6).toFixed(1)} Mo)</button></a>
     </div>
     <p class="hint">${shareable ? 'Sur iPhone : « Enregistrer / partager » puis « Enregistrer la vidéo » pour la mettre dans Photos.' : ''}</p>`;
+  ui.result.querySelector('h2').textContent = item.title || 'Vidéo';
   ui.result.querySelector('video').src = url;
   ui.result.querySelector('a.dl').href = url;
-  ui.result.querySelector('.share')?.addEventListener('click', () => navigator.share({ files: [file], title: 'SanctiMaps' }).catch(() => {}));
+  ui.result.querySelector('.share')?.addEventListener('click', () => navigator.share({ files: [file], title: item.title || 'SanctiMaps' }).catch(() => {}));
   ui.result.hidden = false;
   ui.result.scrollIntoView({ behavior: 'smooth' });
+}
+
+/** Vignette tirée de la vidéo elle-même (enregistrements de l'onglet). */
+async function thumbFromVideo(blob) {
+  try {
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.src = URL.createObjectURL(blob);
+    await new Promise((r, j) => { v.onloadeddata = r; v.onerror = j; setTimeout(j, 5000); });
+    v.currentTime = Math.min(2, (v.duration || 4) * 0.4);
+    await new Promise((r) => { v.onseeked = r; setTimeout(r, 3000); });
+    const c = document.createElement('canvas'); c.width = 360; c.height = Math.round(360 * (v.videoHeight || 9) / (v.videoWidth || 16));
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(v.src);
+    return await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.8));
+  } catch { return null; }
+}
+
+const thumbs = new Map();
+function thumbUrl(item) {
+  if (!item.thumb) return '';
+  if (!thumbs.has(item.id)) thumbs.set(item.id, URL.createObjectURL(item.thumb));
+  return thumbs.get(item.id);
+}
+
+/** La bibliothèque : toutes les vidéos de l'appareil, des plus récentes aux plus anciennes. */
+async function renderLibrary() {
+  let items = [];
+  try { items = await library.list(); } catch (e) { ui.libUsage.textContent = `Bibliothèque indisponible (${e.message}).`; return; }
+  const { persisted, used, quota } = await library.usage();
+  const total = items.reduce((a, it) => a + (it.size || 0), 0);
+  ui.libUsage.textContent = items.length
+    ? `${items.length} vidéo${items.length > 1 ? 's' : ''} · ${(total / 1e6).toFixed(0)} Mo sur cet appareil`
+      + (quota ? ` (place disponible : ${((quota - (used || 0)) / 1e9).toFixed(1)} Go)` : '')
+      + (persisted ? ' · conservation garantie' : '')
+    : 'Aucune vidéo pour l’instant : chaque vidéo enregistrée viendra se ranger ici.';
+  ui.libList.replaceChildren();
+  for (const item of items) {
+    const li = document.createElement('li'); li.className = 'lib-item';
+    const d = new Date(item.created);
+    li.innerHTML = `<button class="lib-thumb" aria-label="Lire"><img alt=""><span class="lib-dur"></span></button>
+      <div class="lib-info"><p class="lib-title"></p><p class="lib-meta"></p>
+        <div class="lib-actions">
+          <button class="mini" data-do="play">▶ Lire</button>
+          <button class="mini" data-do="rename">Renommer</button>
+          ${item.scenario ? '<button class="mini" data-do="reuse">Reprendre le scénario</button>' : ''}
+          <button class="mini del" data-do="delete">Supprimer</button>
+        </div></div>`;
+    const img = li.querySelector('img');
+    if (item.thumb) img.src = thumbUrl(item); else img.remove();
+    li.querySelector('.lib-thumb').classList.add(`is-${(item.aspect || '16:9').replace(':', 'x')}`);
+    li.querySelector('.lib-dur').textContent = `${Math.round(item.seconds || 0)} s`;
+    li.querySelector('.lib-title').textContent = item.title;
+    li.querySelector('.lib-meta').textContent = `${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} · ${item.aspect || ''} · ${((item.size || 0) / 1e6).toFixed(1)} Mo`;
+    li.addEventListener('click', async (e) => {
+      const what = e.target.closest('[data-do]')?.dataset.do || (e.target.closest('.lib-thumb') ? 'play' : null);
+      if (!what) return;
+      if (what === 'play') playItem(await library.get(item.id));
+      if (what === 'rename') {
+        const title = prompt('Nouveau titre', item.title);
+        if (title && title.trim()) { await library.rename(item.id, title.trim()); renderLibrary(); }
+      }
+      if (what === 'reuse' && !busy) {
+        scenario = JSON.parse(JSON.stringify(item.scenario));
+        if (scenario.aspect && scenario.aspect !== ui.aspect.value) { ui.aspect.value = scenario.aspect; setBusy(true); try { await loadStage(); } finally { setBusy(false); } }
+        if (scenario.request) ui.request.value = scenario.request;
+        renderTimeline();
+        log(`Scénario de « ${item.title} » repris : modifiez-le puis enregistrez une nouvelle vidéo.`);
+        ui.timeline.scrollIntoView({ behavior: 'smooth' });
+      }
+      if (what === 'delete' && confirm(`Supprimer « ${item.title} » de la bibliothèque ?`)) {
+        await library.remove(item.id);
+        if (thumbs.has(item.id)) { URL.revokeObjectURL(thumbs.get(item.id)); thumbs.delete(item.id); }
+        renderLibrary();
+      }
+    });
+    ui.libList.append(li);
+  }
 }
 
 async function playOnly() {
@@ -777,6 +875,7 @@ ui.recHint.textContent = canRender()
   : 'Ce navigateur ne sait pas fabriquer de vidéo (iOS 16.4 ou plus récent requis) : le bouton passe en plein écran pour l\'enregistrement de l\'écran.';
 
 restore();
+renderLibrary();
 try {
   if (localStorage.getItem(RENDERING)) {
     localStorage.removeItem(RENDERING);

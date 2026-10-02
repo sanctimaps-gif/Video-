@@ -5,6 +5,11 @@
 Le studio s'utilise directement dans le navigateur : on décrit la vidéo, il prépare
 le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en direct et la filme.
 
+* **Bibliothèque** : chaque vidéo terminée est rangée sur l'appareil (IndexedDB), avec sa
+  vignette, son titre, sa date, sa durée, son format et son scénario : lire, enregistrer dans
+  Photos / partager, télécharger, renommer, reprendre le scénario, supprimer. Rien ne quitte
+  l'appareil. Safari efface les données d'un site après 7 jours d'utilisation sans l'ouvrir,
+  sauf s'il est ajouté à l'écran d'accueil.
 * **Scénario modifiable** : durée, ordre (↑ ↓) et suppression (✕) de chaque plan ; chaque
   commande testée dans « Piloter la carte » peut être ajoutée au scénario. Le scénario est
   conservé sur l'appareil.

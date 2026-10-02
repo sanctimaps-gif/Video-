@@ -44,7 +44,7 @@ export class FrameRenderer {
     this.canvas.width = width; this.canvas.height = height;
     this.ctx = this.canvas.getContext('2d');
     this.styleCache = new Map(); this.images = new Map();
-    this.dirty = true; this.overlay = null; this.frames = 0; this.overlayRenders = 0; this.mapMs = 0; this.overlayMs = 0;
+    this.dirty = true; this.overlay = null; this.frames = 0; this.thumb = null; this.thumbAt = 0; this.overlayRenders = 0; this.mapMs = 0; this.overlayMs = 0;
   }
   get D() { return this.iframe.contentDocument; }
 
@@ -209,6 +209,8 @@ export class FrameRenderer {
     await this.drawMap();
     this.mapMs += performance.now() - t0;
     await this.drawOverlay();
+    // La vignette de la bibliothèque : une image prise vers le premier tiers.
+    if (!this.thumb && this.frames >= this.thumbAt) this.captureThumb();
     const frame = new VideoFrame(this.canvas, { timestamp: Math.round(this.frames * 1e6 / this.fps), duration: Math.round(1e6 / this.fps) });
     this.encoder.encode(frame, { keyFrame: this.frames % (this.fps * 2) === 0 });
     frame.close();
@@ -219,13 +221,20 @@ export class FrameRenderer {
     }
   }
 
+  captureThumb() {
+    const w = 360, h = Math.round(360 * this.height / this.width);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(this.canvas, 0, 0, w, h);
+    this.thumb = new Promise((r) => c.toBlob((b) => r(b), 'image/jpeg', 0.8));
+  }
+
   async finish() {
     await this.encoder.flush();
     this.muxer.finalize();
     this.observer.disconnect();
     destroyContext(this.context);
     const buffer = this.muxer.target.buffer;
-    return { blob: new Blob([buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: this.frames / this.fps,
+    return { blob: new Blob([buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: this.frames / this.fps, thumb: await this.thumb,
       codec: this.codec, stats: { mapMs: this.mapMs / this.frames, overlayMs: this.overlayMs / Math.max(1, this.overlayRenders), overlayRenders: this.overlayRenders } };
   }
 
