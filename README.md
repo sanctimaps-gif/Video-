@@ -38,8 +38,14 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   lancée par le toucher, garde la page éveillée quand on change d'application ou qu'on
   verrouille l'écran ; la progression s'affiche sur l'écran verrouillé et un carillon sonne à la
   fin. Le rendu ne dépend plus de l'affichage (horloge pas à pas, sans requestAnimationFrame),
-  et les attentes réseau ne produisent pas d'images immobiles. Nécessite iOS 16.4+ ou un
-  navigateur récent (WebCodecs).
+  et les attentes réseau ne produisent pas d'images immobiles. **Rien n'est perdu si le
+  téléphone suspend ou ferme la page** : chaque image est rangée aussitôt sur l'appareil
+  (JPEG dans IndexedDB, avec l'avancement) ; une page mise en pause repart d'elle-même au
+  retour, et une page fermée propose « Reprendre le rendu » — l'agent rejoue le scénario sans
+  filmer jusqu'à l'image où il s'était arrêté, puis continue. Le MP4 est assemblé à la fin à
+  partir de ces images (quelques secondes), au retour dans Safari si iOS refuse l'encodeur en
+  arrière-plan, puis rangé dans la bibliothèque. Nécessite iOS 16.4+ ou un navigateur récent
+  (WebCodecs).
 * **« Filmer l'onglet en direct »** (ordinateur, Chrome/Edge) : capture en temps réel de
   la carte, plus rapide mais dépendante de la fluidité de la machine.
 

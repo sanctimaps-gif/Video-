@@ -179,6 +179,11 @@
       <div class="progress" id="progress" hidden><div class="progress__bar"><span id="progress-fill"></span></div><span id="progress-text"></span></div>
     </div>
     <div class="status"><span id="state">État : chargement</span><span id="memory"></span></div>
+    <div class="card after resume" id="resume" hidden style="margin-top:12px">
+      <h2>Rendu interrompu</h2>
+      <p id="resume-text"></p>
+      <div class="row"><button id="resume-go" class="primary">Reprendre le rendu</button><button id="resume-drop">Abandonner</button></div>
+    </div>
     <div class="card result after" id="result" hidden></div>
     <div class="card after library" id="library" style="margin-top:12px">
       <h2>Bibliothèque</h2>

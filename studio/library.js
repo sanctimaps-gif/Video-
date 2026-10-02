@@ -16,19 +16,23 @@ export class Library {
 
   async open() {
     if (this.db) return this.db;
-    const req = indexedDB.open(DB, 1);
+    const req = indexedDB.open(DB, 2);
     req.onupgradeneeded = () => {
-      const store = req.result.createObjectStore(STORE, { keyPath: 'id' });
-      store.createIndex('created', 'created');
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' }).createIndex('created', 'created');
+      // Rendus en cours : leurs images sont gardées au fur et à mesure, pour
+      // survivre à une page mise en pause ou fermée par le téléphone.
+      if (!db.objectStoreNames.contains('jobs')) db.createObjectStore('jobs', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('frames')) db.createObjectStore('frames', { keyPath: ['job', 'i'] });
     };
     this.db = await request(req);
     return this.db;
   }
 
-  async tx(mode, fn) {
+  async tx(mode, fn, stores = STORE) {
     const db = await this.open();
-    const tx = db.transaction(STORE, mode);
-    const result = await fn(tx.objectStore(STORE));
+    const tx = db.transaction(stores, mode);
+    const result = await fn(Array.isArray(stores) ? stores.map((n) => tx.objectStore(n)) : tx.objectStore(stores));
     await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error); });
     return result;
   }
@@ -55,6 +59,40 @@ export class Library {
   }
 
   async remove(id) { return this.tx('readwrite', (s) => request(s.delete(id))); }
+
+  // --------------------------------------------------- rendus en cours
+
+  async saveJob(job) { return this.tx('readwrite', (s) => request(s.put(job)), 'jobs'); }
+  async jobs() { return this.tx('readonly', (s) => request(s.getAll()), 'jobs'); }
+
+  /** Range un lot d'images et l'avancement du rendu, ensemble. */
+  async putFrames(job, frames) {
+    return this.tx('readwrite', async ([jobs, store]) => {
+      for (const f of frames) store.put({ job: job.id, i: f.i, blob: f.blob });
+      jobs.put(job);
+    }, ['jobs', 'frames']);
+  }
+
+  async frame(jobId, i) {
+    const row = await this.tx('readonly', (s) => request(s.get([jobId, i])), 'frames');
+    return row?.blob || null;
+  }
+
+  /** Les images ``from`` à ``to`` (exclu) d'un rendu, dans l'ordre ; ``null`` pour une image manquante. */
+  async frames(jobId, from, to) {
+    const rows = await this.tx('readonly', (s) => request(s.getAll(IDBKeyRange.bound([jobId, from], [jobId, to - 1]))), 'frames');
+    const out = new Array(to - from).fill(null);
+    for (const r of rows) out[r.i - from] = r.blob;
+    return out;
+  }
+
+  /** Efface un rendu en cours et ses images. */
+  async dropJob(jobId) {
+    return this.tx('readwrite', async ([jobs, frames]) => {
+      jobs.delete(jobId);
+      frames.delete(IDBKeyRange.bound([jobId, 0], [jobId, Number.MAX_SAFE_INTEGER]));
+    }, ['jobs', 'frames']);
+  }
 
   async usage() {
     let persisted = null, quota = null, used = null;

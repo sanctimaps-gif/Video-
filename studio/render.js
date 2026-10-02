@@ -5,10 +5,10 @@
 //      quelques millisecondes ;
 //   2. ce qui est posé dessus (fil d'Ariane, légende, fiche, panneau) est
 //      rasterisé par modern-screenshot, seulement quand cela a changé.
-// Les images sont encodées en H.264 par WebCodecs et rangées dans un MP4
-// (mp4-muxer) : la vidéo a exactement 30 images par seconde, quelle que soit la
-// vitesse du téléphone.
-
+// Chaque image est rangée aussitôt sur l'appareil (JPEG, IndexedDB) : si iOS
+// met la page en pause ou la ferme, rien n'est perdu et le rendu reprend là où
+// il s'était arrêté. Le MP4 (H.264, 30 images/s exactement, mp4-muxer) est
+// assemblé à la fin à partir de ces images, par ``encodeJob``.
 import { createContext, destroyContext, domToCanvas } from './vendor/modern-screenshot.mjs';
 import { ArrayBufferTarget, Muxer } from './vendor/mp4-muxer.mjs';
 
@@ -37,30 +37,47 @@ async function pickCodec(width, height, fps) {
   return null;
 }
 
+function untilVisible() {
+  return new Promise((resolve) => {
+    if (!document.hidden) return resolve();
+    const on = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', on); resolve(); } };
+    document.addEventListener('visibilitychange', on);
+  });
+}
+
+function toJpeg(canvas, quality) {
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("image non enregistrée"))), 'image/jpeg', quality));
+}
+
+/** Charge une image ; si le décodage échoue (page suspendue), essaie à l'ancienne. */
+async function loadImage(url) {
+  const img = new Image(); img.src = url;
+  try { await img.decode(); return img; } catch { /* repli */ }
+  const again = new Image();
+  await new Promise((resolve, reject) => { again.onload = resolve; again.onerror = () => reject(new Error('carte non dessinée')); again.src = url; });
+  return again;
+}
+
 export class FrameRenderer {
-  constructor(iframe, { width, height, fps = 30 }) {
+  /**
+   * ``store(batch, thumb)`` range un lot d'images ``{ i, blob }`` ; ``skip``
+   * images sont seulement comptées (reprise d'un rendu interrompu : elles sont
+   * déjà rangées).
+   */
+  constructor(iframe, { width, height, fps = 30, store, skip = 0, thumbAt = 0, quality = 0.86 }) {
     this.iframe = iframe; this.width = width; this.height = height; this.fps = fps;
+    this.store = store; this.skip = skip; this.quality = quality; this.batch = []; this.bytes = 0;
     this.canvas = document.createElement('canvas');
     this.canvas.width = width; this.canvas.height = height;
     this.ctx = this.canvas.getContext('2d');
     this.styleCache = new Map(); this.images = new Map();
-    this.dirty = true; this.overlay = null; this.frames = 0; this.thumb = null; this.thumbAt = 0; this.overlayRenders = 0; this.mapMs = 0; this.overlayMs = 0;
+    this.dirty = true; this.overlay = null; this.frames = 0; this.thumb = null; this.thumbAt = thumbAt; this.overlayRenders = 0; this.mapMs = 0; this.overlayMs = 0;
   }
   get D() { return this.iframe.contentDocument; }
 
   async start() {
     const D = this.D;
     this.scale = this.width / D.documentElement.clientWidth;
-    const picked = await pickCodec(this.width, this.height, this.fps);
-    if (!picked) throw new Error("ce navigateur ne sait pas encoder de vidéo");
-    this.config = picked.config; this.codec = picked.mux;
-    this.muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: picked.mux, width: this.width, height: this.height, frameRate: this.fps }, fastStart: 'in-memory' });
-    this.encoderError = null;
-    this.encoder = new VideoEncoder({
-      output: (chunk, meta) => this.muxer.addVideoChunk(chunk, meta),
-      error: (e) => { this.encoderError = e; },
-    });
-    this.encoder.configure(this.config);
     // Tout changement hors de la carte rend le calque d'interface périmé.
     this.observer = new this.iframe.contentWindow.MutationObserver((list) => {
       const svg = D.querySelector('svg.map');
@@ -165,7 +182,7 @@ export class FrameRenderer {
     const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     try {
-      const img = new Image(); img.src = url; await img.decode();
+      const img = await loadImage(url);
       this.ctx.drawImage(img, r.left * s, r.top * s, r.width * s, r.height * s);
     } finally { URL.revokeObjectURL(url); }
   }
@@ -203,22 +220,40 @@ export class FrameRenderer {
   // ----------------------------------------------------------------- images
 
   async renderFrame() {
-    if (this.encoderError) throw this.encoderError;
+    // Reprise : ces images sont déjà sur l'appareil ; le temps avance seulement.
+    if (this.frames < this.skip) { this.frames += 1; this.dirty = true; return; }
+    // Une image ratée (page suspendue au mauvais moment) est refaite au retour.
+    for (let attempt = 0; ; attempt++) {
+      try { await this.drawFrame(); break; } catch (e) {
+        if (attempt >= 2) throw e;
+        if (document.hidden) await untilVisible();
+        this.dirty = true;
+      }
+    }
+    // La vignette de la bibliothèque : une image prise vers le premier tiers.
+    if (!this.thumb && this.thumbAt >= 0 && this.frames >= this.thumbAt) this.captureThumb();
+    const blob = await toJpeg(this.canvas, this.quality);
+    this.bytes += blob.size;
+    this.batch.push({ i: this.frames, blob });
+    this.frames += 1;
+    if (this.batch.length >= 15) await this.flush();
+  }
+
+  async drawFrame() {
     this.ctx.fillStyle = this.seaColor(); this.ctx.fillRect(0, 0, this.width, this.height);
     const t0 = performance.now();
     await this.drawMap();
     this.mapMs += performance.now() - t0;
     await this.drawOverlay();
-    // La vignette de la bibliothèque : une image prise vers le premier tiers.
-    if (!this.thumb && this.frames >= this.thumbAt) this.captureThumb();
-    const frame = new VideoFrame(this.canvas, { timestamp: Math.round(this.frames * 1e6 / this.fps), duration: Math.round(1e6 / this.fps) });
-    this.encoder.encode(frame, { keyFrame: this.frames % (this.fps * 2) === 0 });
-    frame.close();
-    this.frames += 1;
-    // Ne pas laisser la file d'encodage grossir sur un téléphone.
-    while (this.encoder.encodeQueueSize > 4) {
-      await new Promise((r) => { this.encoder.addEventListener?.('dequeue', r, { once: true }); setTimeout(r, 50); });
-    }
+  }
+
+  /** Range les dernières images (et la vignette) : au pire 15 images perdues si la page est fermée. */
+  async flush() {
+    if (!this.batch.length) return;
+    const batch = this.batch; this.batch = [];
+    const thumb = this.thumb && !this.thumbStored ? await this.thumb : null;
+    if (thumb) this.thumbStored = true;
+    await this.store(batch, thumb, this.frames);
   }
 
   captureThumb() {
@@ -229,14 +264,57 @@ export class FrameRenderer {
   }
 
   async finish() {
-    await this.encoder.flush();
-    this.muxer.finalize();
+    await this.flush();
     this.observer.disconnect();
     destroyContext(this.context);
-    const buffer = this.muxer.target.buffer;
-    return { blob: new Blob([buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: this.frames / this.fps, thumb: await this.thumb,
-      codec: this.codec, stats: { mapMs: this.mapMs / this.frames, overlayMs: this.overlayMs / Math.max(1, this.overlayRenders), overlayRenders: this.overlayRenders } };
+    const drawn = Math.max(1, this.frames - this.skip);
+    return { frames: this.frames, thumb: this.thumb ? await this.thumb : null, bytes: this.bytes,
+      stats: { mapMs: this.mapMs / drawn, overlayMs: this.overlayMs / Math.max(1, this.overlayRenders), overlayRenders: this.overlayRenders } };
   }
 
-  abort() { try { this.encoder?.close(); } catch { /* déjà fermé */ } this.observer?.disconnect(); }
+  abort() { this.observer?.disconnect(); try { destroyContext(this.context); } catch { /* jamais créé */ } }
+}
+
+/**
+ * Assemble le MP4 d'un rendu à partir des images rangées sur l'appareil.
+ * ``onProgress(i, n)`` suit l'avancement. Lève une erreur si l'encodeur est
+ * perdu (iOS le reprend parfois aux pages en arrière-plan) : il suffit de
+ * relancer, les images ne bougent pas.
+ */
+export async function encodeJob(library, job, onProgress = () => {}) {
+  const { width, height, fps } = job; const n = job.frames;
+  const picked = await pickCodec(width, height, fps);
+  if (!picked) throw new Error("ce navigateur ne sait pas encoder de vidéo");
+  const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: picked.mux, width, height, frameRate: fps }, fastStart: 'in-memory' });
+  let failure = null;
+  const encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { failure = e; } });
+  encoder.configure(picked.config);
+  let last = null;
+  try {
+    for (let from = 0; from < n; from += 30) {
+      const blobs = await library.frames(job.id, from, Math.min(n, from + 30));
+      for (let k = 0; k < blobs.length; k++) {
+        if (failure) throw failure;
+        const i = from + k;
+        // Une image manquante (page fermée entre deux rangements) : on répète la précédente.
+        if (blobs[k]) { last?.close(); last = await createImageBitmap(blobs[k]); }
+        if (!last) continue;
+        const frame = new VideoFrame(last, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+        encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+        frame.close();
+        while (encoder.encodeQueueSize > 4 && !failure) {
+          await new Promise((r) => { encoder.addEventListener?.('dequeue', r, { once: true }); setTimeout(r, 50); });
+        }
+        if (i % 15 === 0) onProgress(i, n);
+      }
+    }
+    await encoder.flush();
+    if (failure) throw failure;
+    muxer.finalize();
+  } finally {
+    last?.close();
+    try { encoder.close(); } catch { /* déjà fermé */ }
+  }
+  onProgress(n, n);
+  return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: n / fps, codec: picked.mux };
 }

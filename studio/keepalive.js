@@ -46,6 +46,8 @@ export class KeepAlive {
         this.audio.loop = true;
         this.audio.playsInline = true;
         this.audio.setAttribute('playsinline', '');
+        // Une interruption (appel, autre son) coupe la piste : on la relance dès que possible.
+        this.audio.addEventListener('pause', () => { if (this.active) setTimeout(() => this.resume(), 500); });
         this.bell = new Audio(chime());
         this.bell.playsInline = true;
       }
@@ -64,6 +66,11 @@ export class KeepAlive {
       }
       return p?.catch?.(() => { this.active = false; });
     } catch { this.active = false; return null; }
+  }
+
+  /** Relancer la piste si le système l'a coupée (retour dans Safari, fin d'un appel). */
+  resume() {
+    if (this.active && this.audio?.paused) this.audio.play().catch(() => {});
   }
 
   /** Progression visible sur l'écran verrouillé. */
