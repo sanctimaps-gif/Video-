@@ -19,7 +19,7 @@ export class Director {
   async attempt(name, methods) {
     let last = null;
     for (const m of methods) {
-      try { last = await m(); } catch (e) { last = new Report(name, false, e.message); }
+      try { last = await m(); } catch (e) { if (e?.renderFailure) throw e; last = new Report(name, false, e.message); }
       if (last?.ok) return last;
     }
     return last || new Report(name, false, 'aucune méthode');
@@ -102,7 +102,8 @@ export class Director {
       this.hooks.onShot?.(shot, rehearsal);
       const t0 = this.sm.clock.now();
       let rep;
-      try { rep = await this.run(shot); } catch (e) { rep = new Report(shot.action, false, e.message); }
+      // Une panne du rendu (et non du plan) arrête la prise : elle reprendra à la dernière image rangée.
+      try { rep = await this.run(shot); } catch (e) { if (e?.renderFailure) throw e; rep = new Report(shot.action, false, e.message); }
       reports[shot.id] = rep;
       if (!rehearsal) {
         const left = shot.duration * 1000 - (this.sm.clock.now() - t0);

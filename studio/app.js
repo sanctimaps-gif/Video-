@@ -18,7 +18,7 @@ const ui = {
   overlay: $('#overlay'), state: $('#state'), memory: $('#memory'), result: $('#result'), cmd: $('#cmd'), cmdGo: $('#cmd-go'),
   recHint: $('#rec-hint'), total: $('#total'), capture: $('#capture'), progress: $('#progress'),
   progressFill: $('#progress-fill'), progressText: $('#progress-text'), cmdResult: $('#cmd-result'),
-  resume: $('#resume'), resumeText: $('#resume-text'), resumeLog: $('#resume-log'), resumeGo: $('#resume-go'), resumeDrop: $('#resume-drop'),
+  toast: $('#toast'), resume: $('#resume'), resumeText: $('#resume-text'), resumeLog: $('#resume-log'), resumeGo: $('#resume-go'), resumeDrop: $('#resume-drop'),
   addPause: $('#add-pause'), clear: $('#clear'), library: $('#library'), libList: $('#library-list'), libUsage: $('#library-usage'),
   demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
 };
@@ -27,7 +27,7 @@ const clock = new Clock();
 const keepAlive = new KeepAlive();
 const library = new Library();
 const data = new SiteData(SRC);
-let sm = null, director = null, scenario = null, busy = false, iframe = null;
+let sm = null, director = null, scenario = null, busy = false, iframe = null, activeRenderer = null;
 
 // Le journal est aussi gardé sur l'appareil : si le téléphone ferme la page
 // pendant un rendu, on retrouve au retour ce qui s'est passé juste avant.
@@ -65,6 +65,9 @@ addEventListener('resize', layout);
 async function loadStage() {
   if (demo.on) toggleDemo(false);
   overlay('Chargement de SanctiMaps…');
+  // L'ancienne carte est vidée avant d'être retirée : sur iPhone, sa mémoire
+  // (des centaines de Mo) est rendue tout de suite au lieu de s'accumuler.
+  if (iframe) { try { iframe.src = 'about:blank'; } catch { /* déjà parti */ } }
   ui.stage.replaceChildren();
   iframe = document.createElement('iframe');
   iframe.title = 'SanctiMaps';
@@ -272,6 +275,71 @@ function untilVisible() {
  * seul au retour ; s'il ferme la page, le studio propose au retour de reprendre
  * là où il s'était arrêté. ``resume`` est un rendu interrompu à poursuivre.
  */
+/** Un rendu, de la préparation à la bibliothèque. Lève une erreur si quelque chose casse en route. */
+async function renderJob(job) {
+  if (job.status !== 'encoding') {
+    // Répétition et chargement au pas à pas, eux aussi : rien ne dépend de l'écran.
+    clock.beginRender(DRY, 30);
+    if (job.status === 'preparing') {
+      keepAlive.update('vérification du scénario', true);
+      if (!(await rehearse())) { log('Aucun plan réalisable.'); await library.dropJob(job.id).catch(() => {}); return 'noplan'; }
+      job.scenario = JSON.parse(JSON.stringify(scenario));
+    }
+    await loadStage();
+    for (const s of scenario.shots) markShot(s.id, null, null);
+    const [w, h] = OUTPUT[ui.aspect.value];
+    const expected = total(scenario);
+    if (job.status === 'preparing') {
+      Object.assign(job, { width: w, height: h, expected, framesDone: 0, thumbAt: Math.round(expected * 30 * 0.4), status: 'rendering', updated: Date.now() });
+      await library.saveJob(job);
+    } else log(`Reprise du rendu à ${(job.framesDone / 30).toFixed(1)} s : l'agent rejoue sans filmer jusque-là.`);
+    const renderer = activeRenderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30, skip: job.framesDone, thumbAt: job.thumb ? -1 : job.thumbAt,
+      store: async (batch, thumb, done) => {
+        job.framesDone = done; job.updated = Date.now();
+        if (thumb) job.thumb = thumb;
+        try { await library.putFrames(job, batch); } catch (e) {
+          const err = new Error(e?.name === 'QuotaExceededError' ? "plus de place sur l'appareil pour les images de la vidéo" : `images non rangées (${e?.message})`);
+          err.fatal = e?.name === 'QuotaExceededError';
+          throw err;
+        }
+      } });
+    await renderer.start();
+    ui.progress.hidden = false;
+    let lastBeat = Date.now();
+    const onFrame = () => {
+      const now = Date.now();
+      // Page suspendue par le téléphone ? On le dit au retour : le rendu, lui, repart.
+      if (now - lastBeat > 20000) log(`Rendu en pause ${Math.round((now - lastBeat) / 1000)} s (page suspendue par le téléphone) : il reprend là où il était.`);
+      lastBeat = now;
+      const t = renderer.frames / 30;
+      const pct = Math.min(100, (t / expected) * 100);
+      ui.progressFill.style.width = `${pct}%`;
+      ui.progressText.textContent = renderer.frames < renderer.skip ? `Reprise ${t.toFixed(1)} / ${(renderer.skip / 30).toFixed(0)} s` : `Rendu ${t.toFixed(1)} / ${expected.toFixed(0)} s`;
+      keepAlive.update(`${Math.floor(pct)} % — ${t.toFixed(0)} / ${expected.toFixed(0)} s`);
+    };
+    clock.listeners.add(onFrame);
+    clock.beginRender(renderer, 30);
+    const started = performance.now();
+    try {
+      await clock.wait(300);
+      await director.play(scenario);
+      await clock.wait(300);
+    } finally {
+      clock.endRender(); clock.listeners.delete(onFrame);
+    }
+    const done = await renderer.finish();
+    job.frames = done.frames; job.framesDone = done.frames; job.status = 'encoding'; job.updated = Date.now();
+    if (done.thumb && !job.thumb) job.thumb = done.thumb;
+    await library.saveJob(job);
+    log(`Images rendues : ${(done.frames / 30).toFixed(1)} s, ${w}×${h}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte ${done.stats.mapMs.toFixed(0)} ms/image, interface ${done.stats.overlayRenders}× ${done.stats.overlayMs.toFixed(0)} ms, ${(done.bytes / 1e6).toFixed(0)} Mo d'images).`);
+  }
+  const out = await assemble(job);
+  out.thumb = job.thumb;
+  const saved = await showResult(out, job);
+  if (saved) await library.dropJob(job.id);
+  return saved;
+}
+
 async function renderVideo(resume = null) {
   if (busy) return;
   if (!canRender()) {
@@ -282,7 +350,7 @@ async function renderVideo(resume = null) {
   keepAlive.start(`SanctiMaps — ${(resume?.title || scenario?.title || ui.request.value || 'vidéo').slice(0, 40)}`);
   setBusy(true);
   ui.resume.hidden = true;
-  let renderer = null, wakeLock = null, job = resume;
+  let wakeLock = null, job = resume;
   try {
     try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* pas de verrou : tant pis */ }
     if (job) {
@@ -302,67 +370,26 @@ async function renderVideo(resume = null) {
       await library.saveJob(job);
       log(`Rendu lancé : « ${job.title} » (${job.expected.toFixed(0)} s, ${job.aspect}).`);
     }
-    if (job.status !== 'encoding') {
-      // Répétition et chargement au pas à pas, eux aussi : rien ne dépend de l'écran.
-      clock.beginRender(DRY, 30);
-      if (job.status === 'preparing') {
-        keepAlive.update('vérification du scénario', true);
-        if (!(await rehearse())) { log('Aucun plan réalisable.'); await library.dropJob(job.id).catch(() => {}); job = null; return; }
-        job.scenario = JSON.parse(JSON.stringify(scenario));
+    let saved = null;
+    // Si quelque chose casse en route (mémoire, page suspendue au mauvais
+    // moment), le rendu repart tout seul de la dernière image rangée — sans
+    // qu'il faille appuyer sur un bouton — tant qu'il avance.
+    for (let attempt = 1; ; attempt++) {
+      const before = job.framesDone;
+      try { saved = await renderJob(job); break; } catch (e) {
+        activeRenderer?.abort(); activeRenderer = null; clock.endRender();
+        log(`Incident : ${e.message}`);
+        const fresh = (await library.jobs().catch(() => [])).find((j) => j.id === job.id);
+        if (!fresh || e.fatal || attempt >= 40 || (fresh.framesDone <= before && attempt >= 3)) throw e;
+        job = fresh;
+        log(`Reprise automatique à ${(job.framesDone / 30).toFixed(1)} s.`);
+        await new Promise((r) => setTimeout(r, 800));
       }
-      await loadStage();
-      for (const s of scenario.shots) markShot(s.id, null, null);
-      const [w, h] = OUTPUT[ui.aspect.value];
-      const expected = total(scenario);
-      if (job.status === 'preparing') {
-        Object.assign(job, { width: w, height: h, expected, framesDone: 0, thumbAt: Math.round(expected * 30 * 0.4), status: 'rendering', updated: Date.now() });
-        await library.saveJob(job);
-      } else log(`Reprise du rendu à ${(job.framesDone / 30).toFixed(1)} s : l'agent rejoue sans filmer jusque-là.`);
-      renderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30, skip: job.framesDone, thumbAt: job.thumb ? -1 : job.thumbAt,
-        store: async (batch, thumb, done) => {
-          job.framesDone = done; job.updated = Date.now();
-          if (thumb) job.thumb = thumb;
-          try { await library.putFrames(job, batch); } catch (e) {
-            throw new Error(e?.name === 'QuotaExceededError' ? "plus de place sur l'appareil pour les images de la vidéo" : `images non rangées (${e?.message})`);
-          }
-        } });
-      await renderer.start();
-      ui.progress.hidden = false;
-      let lastBeat = Date.now();
-      const onFrame = () => {
-        const now = Date.now();
-        // Page suspendue par le téléphone ? On le dit au retour : le rendu, lui, repart.
-        if (now - lastBeat > 20000) log(`Rendu en pause ${Math.round((now - lastBeat) / 1000)} s (page suspendue par le téléphone) : il reprend là où il était.`);
-        lastBeat = now;
-        const t = renderer.frames / 30;
-        const pct = Math.min(100, (t / expected) * 100);
-        ui.progressFill.style.width = `${pct}%`;
-        ui.progressText.textContent = renderer.frames < renderer.skip ? `Reprise ${t.toFixed(1)} / ${(renderer.skip / 30).toFixed(0)} s` : `Rendu ${t.toFixed(1)} / ${expected.toFixed(0)} s`;
-        keepAlive.update(`${Math.floor(pct)} % — ${t.toFixed(0)} / ${expected.toFixed(0)} s`);
-      };
-      clock.listeners.add(onFrame);
-      clock.beginRender(renderer, 30);
-      const started = performance.now();
-      try {
-        await clock.wait(300);
-        await director.play(scenario);
-        await clock.wait(300);
-      } finally {
-        clock.endRender(); clock.listeners.delete(onFrame);
-      }
-      const done = await renderer.finish();
-      job.frames = done.frames; job.framesDone = done.frames; job.status = 'encoding'; job.updated = Date.now();
-      if (done.thumb && !job.thumb) job.thumb = done.thumb;
-      await library.saveJob(job);
-      log(`Images rendues : ${(done.frames / 30).toFixed(1)} s, ${w}×${h}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte ${done.stats.mapMs.toFixed(0)} ms/image, interface ${done.stats.overlayRenders}× ${done.stats.overlayMs.toFixed(0)} ms, ${(done.bytes / 1e6).toFixed(0)} Mo d'images).`);
     }
-    const out = await assemble(job);
-    out.thumb = job.thumb;
-    const saved = await showResult(out, job);
-    if (saved) await library.dropJob(job.id);
+    if (saved === 'noplan') return;
     await keepAlive.finish(saved ? 'Vidéo prête — rangée dans la bibliothèque' : 'Vidéo prête — à enregistrer dans Safari');
   } catch (e) {
-    renderer?.abort(); clock.endRender();
+    activeRenderer?.abort(); clock.endRender();
     log(`Échec : ${e.message}`); overlay('');
     keepAlive.update('échec du rendu', true); keepAlive.stop();
     if (job) await offerResume();
@@ -371,6 +398,7 @@ async function renderVideo(resume = null) {
     keepAlive.stop();
     wakeLock?.release().catch(() => {});
     ui.progress.hidden = true;
+    toast('');
     setBusy(false);
   }
 }
@@ -420,6 +448,37 @@ async function offerResume() {
   ui.resume.hidden = false;
   ui.resume.dataset.id = job.id;
 }
+
+/**
+ * Page rechargée par Safari au milieu d'un rendu : il repart tout seul, sans
+ * bouton. Seul un rendu qui casse deux fois de suite au même endroit attend
+ * qu'on décide (fenêtre « Rendu interrompu »).
+ */
+let resumedAutomatically = false;
+async function autoResume() {
+  await offerResume();
+  if (ui.resume.hidden) return;
+  const job = (await library.jobs().catch(() => [])).find((j) => j.id === ui.resume.dataset.id);
+  if (!job) return;
+  const progressed = job.reloadFrames === undefined || job.framesDone > job.reloadFrames;
+  job.stuck = progressed ? 0 : (job.stuck || 0) + 1;
+  job.reloadFrames = job.framesDone;
+  await library.saveJob(job).catch(() => {});
+  if (job.stuck >= 2) {
+    ui.resumeText.textContent = `Le rendu s'est arrêté plusieurs fois au même endroit (${(job.framesDone / 30).toFixed(0)} s). ` + ui.resumeText.textContent;
+    return;
+  }
+  ui.resume.hidden = true;
+  resumedAutomatically = true;
+  toast("Le rendu a repris tout seul. Touchez l'écran une fois : il pourra alors continuer si vous quittez Safari.");
+  // Le son qui garde la page éveillée en arrière-plan ne peut partir que d'un toucher.
+  document.addEventListener('pointerdown', () => { if (busy) keepAlive.start(`SanctiMaps — ${job.title.slice(0, 40)}`); toast(''); }, { once: true, capture: true });
+  await stageReady;
+  while (busy) await new Promise((r) => setTimeout(r, 200));
+  renderVideo(job);
+}
+
+function toast(text) { ui.toast.textContent = text; ui.toast.hidden = !text; }
 
 ui.resumeGo.addEventListener('click', async () => {
   if (ui.resumeGo.disabled) return;
@@ -1045,8 +1104,8 @@ ui.recHint.textContent = canRender()
 
 restore();
 renderLibrary();
-offerResume().then(() => {
-  if (ui.resume.hidden) return;
+autoResume().then(() => {
+  if (ui.resume.hidden && !resumedAutomatically) return;
   // Le rendu a été coupé : on montre ce que le journal disait juste avant.
   const tail = previousJournal.slice(-8);
   if (tail.length) {
@@ -1070,4 +1129,4 @@ const stageReady = new Promise((r) => { markReady = r; });
   } finally { setBusy(false); markReady(); }
 })();
 
-window.__studio = { get sm() { return sm; }, get director() { return director; }, get scenario() { return scenario; }, plan, data, command };
+window.__studio = { get renderer() { return activeRenderer; }, get sm() { return sm; }, get director() { return director; }, get scenario() { return scenario; }, plan, data, command };

@@ -13,6 +13,9 @@ import { createContext, destroyContext, domToCanvas } from './vendor/modern-scre
 import { ArrayBufferTarget, Muxer } from './vendor/mp4-muxer.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const XLINK = 'http://www.w3.org/1999/xlink';
+const escAttr = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const escText = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const PROPS = ['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray',
   'stroke-linejoin', 'stroke-linecap', 'opacity', 'display', 'visibility', 'font-family', 'font-size', 'font-weight',
   'font-style', 'letter-spacing', 'paint-order', 'text-anchor', 'dominant-baseline', 'vector-effect', 'filter',
@@ -35,6 +38,21 @@ async function pickCodec(width, height, fps) {
     try { if ((await VideoEncoder.isConfigSupported(config)).supported) return { config, mux: c.mux }; } catch { /* suivant */ }
   }
   return null;
+}
+
+/** Réduit une image à ``max`` pixels de côté ; ``null`` si ce n'est pas possible. */
+async function shrink(blob, max) {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    if (k === 1 && blob.size < 12000) { bmp.close(); return null; }
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close();
+    const url = c.toDataURL(/png|gif|svg/.test(blob.type) ? 'image/png' : 'image/jpeg', 0.85);
+    c.width = 0; c.height = 0;
+    return url;
+  } catch { return null; }
 }
 
 function untilVisible() {
@@ -89,6 +107,11 @@ export class FrameRenderer {
       filter: (node) => this.keep(node),
       fetch: { requestInit: { mode: 'cors' } },
     });
+    // Une seule toile pour le calque d'interface, réutilisée à chaque rendu.
+    this.overlayCanvas = document.createElement('canvas');
+    this.overlayCanvas.width = Math.floor(D.documentElement.clientWidth * this.scale);
+    this.overlayCanvas.height = Math.floor(D.documentElement.clientHeight * this.scale);
+    this.context.reuseCanvas = this.overlayCanvas;
   }
 
   /**
@@ -108,13 +131,23 @@ export class FrameRenderer {
 
   // ------------------------------------------------------------ calque carte
 
-  async inlineImage(url) {
+  /**
+   * Une image de la carte, recopiée dans le SVG de chaque image de la vidéo.
+   * ``max`` : côté maximal en pixels — les portraits des repères, affichés en
+   * vignettes de quelques dizaines de pixels, sont réduits : chaque image de la
+   * vidéo pèse alors des centaines de Ko de moins, et la mémoire du téléphone
+   * suit.
+   */
+  async inlineImage(url, max = 0) {
     if (!url || url.startsWith('data:')) return url;
     if (!this.images.has(url)) {
+      // Les fonds de carte déjà vus restent en mémoire, dans une limite raisonnable.
+      if (this.images.size >= 600) this.images.delete(this.images.keys().next().value);
       this.images.set(url, (async () => {
         try {
           const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 6000);
           const blob = await (await fetch(url, { mode: 'cors', signal: ctrl.signal })).blob();
+          if (max) { const small = await shrink(blob, max); if (small) return small; }
           return await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(null); fr.readAsDataURL(blob); });
         } catch { return null; }
       })());
@@ -156,34 +189,61 @@ export class FrameRenderer {
     this.ctx.fillStyle = this.seaColor();
     this.ctx.fillRect(hr.left * s, hr.top * s, hr.width * s, hr.height * s);
     const root = `${D.documentElement.dataset.theme || ''}|${host.dataset.mode}|${host.className}|${D.documentElement.dataset.tiles || ''}`;
-    const clone = svg.cloneNode(true);
-    const src = [svg, ...svg.querySelectorAll('*')]; const dst = [clone, ...clone.querySelectorAll('*')];
-    const sigs = new Map();
-    const pending = [];
-    for (let i = 0; i < src.length; i++) {
-      const el = src[i], copy = dst[i];
+    // Images de la carte (fonds, portraits) : recopiées en data: d'abord, car un
+    // SVG dessiné comme image ne peut rien charger lui-même.
+    const hrefs = new Map();
+    await Promise.all([...svg.querySelectorAll('image')].map(async (el) => {
+      const href = el.getAttribute('href') || el.getAttributeNS(XLINK, 'href');
+      if (!href) return;
+      if (href.startsWith('data:')) { hrefs.set(el, href); return; }
+      const data = await this.inlineImage(new URL(href, D.baseURI).href, el.classList.contains('tile') ? 0 : 128);
+      hrefs.set(el, data || null);
+    }));
+    // Puis la carte est écrite en texte directement depuis la page, sans copie
+    // du DOM (des milliers d'éléments par image, que Safari met longtemps à
+    // libérer). Les styles calculés vont dans une feuille partagée, une classe
+    // par style distinct, au lieu d'être répétés sur chaque élément.
+    const classes = new Map(); const out = [];
+    const write = (el, parentSig) => {
       const cls = el.getAttribute('class') || '';
-      const sig = `${sigs.get(el.parentNode) || root}>${el.localName}.${cls}`;
-      sigs.set(el, sig);
+      const sig = `${parentSig}>${el.localName}.${cls}`;
       const style = this.styleFor(el, sig, win);
-      if (style) copy.setAttribute('style', style + (copy.getAttribute('style') ? ';' + copy.getAttribute('style') : ''));
-      if (el.localName === 'image') {
-        const href = el.getAttribute('href') || el.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
-        if (href && !href.startsWith('data:')) {
-          const abs = new URL(href, D.baseURI).href;
-          pending.push(this.inlineImage(abs).then((data) => { if (data) copy.setAttribute('href', data); else copy.remove(); }));
-        }
+      if (el !== svg && style.includes('display:none')) return;
+      const name = el.localName;
+      if (name === 'image' && !hrefs.get(el)) return;
+      out.push('<', name);
+      if (el === svg) out.push(` xmlns="${SVG_NS}" xmlns:xlink="${XLINK}" width="${r.width}" height="${r.height}"`);
+      for (const at of el.attributes) {
+        const n = at.name;
+        if (n === 'class' || n === 'aria-hidden' || (el === svg && (n === 'width' || n === 'height' || n.startsWith('xmlns')))) continue;
+        if (name === 'image' && (n === 'href' || n === 'xlink:href')) continue;
+        if (n.startsWith('on')) continue;
+        out.push(' ', n, '="', escAttr(at.value), '"');
       }
-    }
-    await Promise.all(pending);
-    clone.setAttribute('xmlns', SVG_NS);
-    clone.setAttribute('width', r.width); clone.setAttribute('height', r.height);
-    clone.removeAttribute('aria-hidden');
-    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+      if (name === 'image') out.push(' href="', escAttr(hrefs.get(el)), '"');
+      if (style) {
+        let c = classes.get(style);
+        if (!c) { c = `s${classes.size.toString(36)}`; classes.set(style, c); }
+        out.push(' class="', c, '"');
+      }
+      out.push('>');
+      if (el === svg) out.push('\u0000');
+      for (let child = el.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === 1) write(child, sig);
+        else if (child.nodeType === 3) out.push(escText(child.nodeValue));
+      }
+      out.push('</', name, '>');
+    };
+    write(svg, root);
+    const sheet = `<style>${[...classes].map(([st, c]) => `.${c}{${st}}`).join('\n').replace(/</g, '\\3c ')}</style>`;
+    const text = out.join('').replace('\u0000', sheet);
+    const blob = new Blob([text], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     try {
       const img = await loadImage(url);
       this.ctx.drawImage(img, r.left * s, r.top * s, r.width * s, r.height * s);
+      // L'image décodée (plusieurs Mo) est libérée tout de suite, sans attendre Safari.
+      img.removeAttribute('src');
     } finally { URL.revokeObjectURL(url); }
   }
 
@@ -220,6 +280,15 @@ export class FrameRenderer {
   // ----------------------------------------------------------------- images
 
   async renderFrame() {
+    try { await this.renderOne(); } catch (e) {
+      // Distinguer une panne du rendu d'un plan raté : le metteur en scène la laisse remonter.
+      const err = e instanceof Error ? e : new Error(String(e));
+      err.renderFailure = true;
+      throw err;
+    }
+  }
+
+  async renderOne() {
     // Reprise : ces images sont déjà sur l'appareil ; le temps avance seulement.
     if (this.frames < this.skip) { this.frames += 1; this.dirty = true; return; }
     // Une image ratée (page suspendue au mauvais moment) est refaite au retour.
@@ -267,12 +336,19 @@ export class FrameRenderer {
     await this.flush();
     this.observer.disconnect();
     destroyContext(this.context);
+    this.release();
     const drawn = Math.max(1, this.frames - this.skip);
     return { frames: this.frames, thumb: this.thumb ? await this.thumb : null, bytes: this.bytes,
       stats: { mapMs: this.mapMs / drawn, overlayMs: this.overlayMs / Math.max(1, this.overlayRenders), overlayRenders: this.overlayRenders } };
   }
 
-  abort() { this.observer?.disconnect(); try { destroyContext(this.context); } catch { /* jamais créé */ } }
+  abort() { this.observer?.disconnect(); try { destroyContext(this.context); } catch { /* jamais créé */ } this.release(); }
+
+  /** Rend la mémoire des toiles tout de suite (Safari les garde sinon longtemps). */
+  release() {
+    for (const c of [this.canvas, this.overlayCanvas]) if (c) { c.width = 0; c.height = 0; }
+    this.images.clear(); this.styleCache.clear(); this.overlay = null;
+  }
 }
 
 /**

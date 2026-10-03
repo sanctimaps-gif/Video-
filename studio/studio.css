@@ -109,3 +109,6 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .resume-modal h2 { font-size: 1rem; color: inherit; }
 .resume-log { max-height: 9em; overflow: auto; font-size: .72rem; white-space: pre-wrap; background: rgba(0,0,0,.05); padding: 8px; border-radius: 8px; }
 .version { opacity: .6; font-size: .8em; white-space: nowrap; }
+.toast { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 40; padding: 12px 14px; border-radius: 12px;
+  background: #022254; color: #fff; font-size: .9rem; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.toast[hidden] { display: none; }

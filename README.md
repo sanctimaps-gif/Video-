@@ -44,7 +44,11 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   retour, et une page fermée propose « Reprendre le rendu » — l'agent rejoue le scénario sans
   filmer jusqu'à l'image où il s'était arrêté, puis continue. Le rendu est noté dès le toucher (même fermé pendant la préparation, il est
   proposé à la reprise), et le journal des dernières secondes avant l'interruption est gardé et
-  affiché. Le MP4 est assemblé à la fin à
+  affiché. **La reprise est automatique** : après une panne en cours de rendu, ou quand Safari
+  recharge la page, le rendu repart seul de la dernière image rangée (la fenêtre « Rendu
+  interrompu » n'apparaît que s'il casse plusieurs fois au même endroit). Pour tenir dans la
+  mémoire d'un iPhone, chaque image de la carte est écrite directement depuis la page, sans copie
+  du DOM, avec une feuille de style partagée (SVG ~5× plus léger), et les toiles sont réutilisées. Le MP4 est assemblé à la fin à
   partir de ces images (quelques secondes), au retour dans Safari si iOS refuse l'encodeur en
   arrière-plan, puis rangé dans la bibliothèque. Nécessite iOS 16.4+ ou un navigateur récent
   (WebCodecs).

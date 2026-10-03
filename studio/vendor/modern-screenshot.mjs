@@ -510,9 +510,18 @@ async function imageToCanvas(image, context) {
   }
   context.drawImageCount = 0;
   log.timeEnd("image to canvas");
+  if (context.reuseCanvas) loaded.removeAttribute?.("src");
   return canvas;
 }
 function createCanvas(ownerDocument, context) {
+  // Studio SanctiMaps : une seule toile réutilisée à chaque rendu (option
+  // « reuseCanvas »), au lieu d'une nouvelle toile de 8 Mo par image — Safari
+  // libère les toiles tard et coupe la page quand elles s'accumulent.
+  if (context.reuseCanvas) {
+    const canvas = context.reuseCanvas, context2d = canvas.getContext("2d");
+    context2d.clearRect(0, 0, canvas.width, canvas.height);
+    return { canvas, context2d };
+  }
   const { width, height, scale, backgroundColor, maximumCanvasSize: max } = context;
   const canvas = ownerDocument.createElement("canvas");
   canvas.width = Math.floor(width * scale);
