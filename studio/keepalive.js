@@ -6,6 +6,12 @@
 // (lancée par le toucher sur « Enregistrer », comme l'exige le téléphone).
 // L'écran verrouillé affiche la progression (Media Session), et un carillon
 // signale la fin.
+//
+// « Garder ma musique » (par défaut) : la piste se mélange aux autres sons
+// (Audio Session « ambient », Safari 16.4+) au lieu de prendre la main — la
+// musique du téléphone continue, et le studio ne s'affiche pas dans « À l'écoute »
+// pour ne pas lui voler ses commandes. Le carillon final baisse la musique un
+// instant (« transient ») sans l'arrêter.
 
 function wav(samples, rate = 22050) {
   const data = new DataView(new ArrayBuffer(44 + samples.length * 2));
@@ -36,7 +42,12 @@ function chime() {
 }
 
 export class KeepAlive {
-  constructor() { this.audio = null; this.active = false; this.last = 0; }
+  constructor() { this.audio = null; this.active = false; this.last = 0; this.mix = true; }
+
+  /** Type de session audio du navigateur, quand il le permet (Safari 16.4+). */
+  session(type) {
+    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch { /* non pris en charge */ }
+  }
 
   /** À appeler directement dans le toucher (avant tout « await »). */
   start(title = 'Rendu de la vidéo') {
@@ -46,11 +57,11 @@ export class KeepAlive {
         this.audio.loop = true;
         this.audio.playsInline = true;
         this.audio.setAttribute('playsinline', '');
-        // Une interruption (appel, autre son) coupe la piste : on la relance dès que possible.
-        this.audio.addEventListener('pause', () => { if (this.active) setTimeout(() => this.resume(), 500); });
         this.bell = new Audio(chime());
         this.bell.playsInline = true;
       }
+      // Avant de jouer : se mélanger à la musique, ou prendre la main (rendu le plus sûr).
+      this.session(this.mix ? 'ambient' : 'playback');
       this.audio.currentTime = 0;
       const p = this.audio.play();
       // Le carillon doit lui aussi être « débloqué » par ce même toucher.
@@ -59,7 +70,7 @@ export class KeepAlive {
       this.active = true;
       this.title = title;
       this.update('0 %', true);
-      if ('mediaSession' in navigator) {
+      if ('mediaSession' in navigator && !this.mix) {
         for (const action of ['play', 'pause', 'stop', 'seekbackward', 'seekforward']) {
           try { navigator.mediaSession.setActionHandler(action, () => this.audio?.play().catch(() => {})); } catch { /* action non prise en charge */ }
         }
@@ -78,7 +89,7 @@ export class KeepAlive {
     const now = performance.now();
     if (!force && now - this.last < 1000) return;
     this.last = now;
-    if ('mediaSession' in navigator && window.MediaMetadata) {
+    if ('mediaSession' in navigator && window.MediaMetadata && !this.mix) {
       try {
         navigator.mediaSession.metadata = new MediaMetadata({ title: this.title || 'SanctiMaps', artist: text, album: 'Studio vidéo SanctiMaps',
           artwork: [{ src: new URL('studio/icons/icon-512.png', location.href).href, sizes: '512x512', type: 'image/png' },
@@ -90,6 +101,8 @@ export class KeepAlive {
 
   async finish(text = 'Vidéo prête') {
     this.update(text, true);
+    // Musique gardée : elle baisse le temps du carillon, puis reprend son volume.
+    if (this.mix) this.session('transient');
     try { this.bell.currentTime = 0; await this.bell.play(); await new Promise((r) => setTimeout(r, 900)); } catch { /* pas de son */ }
     this.stop();
   }
@@ -97,6 +110,7 @@ export class KeepAlive {
   stop() {
     this.active = false;
     try { this.audio?.pause(); } catch { /* déjà arrêté */ }
-    if ('mediaSession' in navigator) { try { navigator.mediaSession.playbackState = 'none'; } catch { /* rien */ } }
+    if ('mediaSession' in navigator && !this.mix) { try { navigator.mediaSession.playbackState = 'none'; } catch { /* rien */ } }
+    this.session('auto');
   }
 }

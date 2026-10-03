@@ -35,7 +35,8 @@ le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en dire
   image par image sur l'appareil (30 images/s exactes, 1080p, H.264), puis proposée au
   téléchargement ou, sur iPhone, à « Enregistrer la vidéo » dans Photos. Le rendu prend
   quelques minutes. **Le rendu continue en arrière-plan** : une piste audio quasi silencieuse,
-  lancée par le toucher, garde la page éveillée quand on change d'application ou qu'on
+  lancée par le toucher, garde la page éveillée (par défaut elle se mélange à la musique du
+  téléphone sans la couper — Audio Session « ambient » ; case « Ne pas couper ma musique ») quand on change d'application ou qu'on
   verrouille l'écran ; la progression s'affiche sur l'écran verrouillé et un carillon sonne à la
   fin. Le rendu ne dépend plus de l'affichage (horloge pas à pas, sans requestAnimationFrame),
   et les attentes réseau ne produisent pas d'images immobiles. **Rien n'est perdu si le

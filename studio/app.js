@@ -25,6 +25,14 @@ const ui = {
 
 const clock = new Clock();
 const keepAlive = new KeepAlive();
+// Garder la musique du téléphone (par défaut) ou prendre la main pour le rendu en arrière-plan le plus sûr.
+const MUSIC = 'sanctimaps-studio.musique';
+try { $('#keep-music').checked = localStorage.getItem(MUSIC) !== 'non'; } catch { /* sans stockage */ }
+keepAlive.mix = $('#keep-music').checked;
+$('#keep-music').addEventListener('change', (e) => {
+  keepAlive.mix = e.target.checked;
+  try { localStorage.setItem(MUSIC, e.target.checked ? 'oui' : 'non'); } catch { /* sans stockage */ }
+});
 const library = new Library();
 const data = new SiteData(SRC);
 let sm = null, director = null, scenario = null, busy = false, iframe = null, activeRenderer = null;
@@ -1099,7 +1107,7 @@ if (params.get('format') && LOGICAL[params.get('format')]) ui.aspect.value = par
 else if (!canRecord() && innerHeight > innerWidth) ui.aspect.value = '9:16';
 
 ui.recHint.textContent = canRender()
-  ? 'La vidéo est fabriquée image par image sur cet appareil (30 images/s, MP4). Vous pouvez changer d\'application ou verrouiller l\'écran : la progression s\'affiche sur l\'écran verrouillé et un carillon sonne à la fin. La vidéo va d\'elle-même dans la bibliothèque. Chaque image est gardée sur l\'appareil au fur et à mesure : si le téléphone met la page en pause, le rendu repart au retour ; s\'il la ferme, « Reprendre le rendu » le termine sans recommencer.'
+  ? 'La vidéo est fabriquée image par image sur cet appareil (30 images/s, MP4). Vous pouvez changer d\'application ou verrouiller l\'écran ; un carillon sonne à la fin et la vidéo va d\'elle-même dans la bibliothèque. Votre musique continue (case cochée) ; décochée, le studio prend la main sur le son, ce qui garde le rendu actif plus sûrement en arrière-plan et affiche la progression sur l\'écran verrouillé. Chaque image est gardée au fur et à mesure : si le téléphone arrête la page, le rendu repart tout seul.'
   : 'Ce navigateur ne sait pas fabriquer de vidéo (iOS 16.4 ou plus récent requis) : le bouton passe en plein écran pour l\'enregistrement de l\'écran.';
 
 restore();

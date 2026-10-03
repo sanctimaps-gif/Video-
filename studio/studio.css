@@ -112,3 +112,5 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .toast { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 40; padding: 12px 14px; border-radius: 12px;
   background: #022254; color: #fff; font-size: .9rem; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
 .toast[hidden] { display: none; }
+.check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: .9rem; }
+.check input { width: 18px; height: 18px; flex: none; }
