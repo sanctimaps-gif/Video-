@@ -11,6 +11,12 @@ function request(req) {
   return new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
 }
 
+/** Une vidéo rangée en octets bruts redevient un fichier. */
+function revive(item) {
+  if (item && !item.blob && item.data) item.blob = new Blob([item.data], { type: item.type || 'video/mp4' });
+  return item;
+}
+
 export class Library {
   constructor() { this.db = null; }
 
@@ -42,17 +48,21 @@ export class Library {
     const id = (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const item = { id, created: Date.now(), blob, thumb: thumb || null, title: title || 'Vidéo SanctiMaps',
       seconds, aspect, codec, ext: ext || 'mp4', size: blob.size, scenario: scenario ? JSON.parse(JSON.stringify(scenario)) : null };
-    await this.tx('readwrite', (s) => request(s.put(item)));
+    try { await this.tx('readwrite', (s) => request(s.put(item))); } catch (e) {
+      // Certains Safari refusent de ranger un gros fichier tel quel : on le range en octets bruts.
+      const data = await blob.arrayBuffer();
+      await this.tx('readwrite', (s) => request(s.put({ ...item, blob: null, data, type: blob.type || 'video/mp4' })));
+    }
     try { await navigator.storage?.persist?.(); } catch { /* le navigateur décide */ }
     return item;
   }
 
   async list() {
     const all = await this.tx('readonly', (s) => request(s.getAll()));
-    return all.sort((a, b) => b.created - a.created);
+    return all.map(revive).sort((a, b) => b.created - a.created);
   }
 
-  async get(id) { return this.tx('readonly', (s) => request(s.get(id))); }
+  async get(id) { return revive(await this.tx('readonly', (s) => request(s.get(id)))); }
 
   async rename(id, title) {
     return this.tx('readwrite', async (s) => { const item = await request(s.get(id)); if (item) { item.title = title; await request(s.put(item)); } });

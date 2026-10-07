@@ -511,11 +511,23 @@ async function runQueue() {
   let wakeLock = null;
   try {
     await stageReady;
+    const tries = new Map();
     for (;;) {
-      const jobs = (await library.jobs().catch(() => [])).filter((j) => !j.failed).sort((x, y) => x.created - y.created);
+      const all = await library.jobs().catch(() => []);
+      // Les vidéos terminées sont seulement nettoyées, jamais refaites.
+      for (const j of all.filter((x) => x.status === 'done')) await library.dropJob(j.id).catch(() => {});
+      const jobs = all.filter((j) => !j.failed && j.status !== 'done').sort((x, y) => x.created - y.created);
       // Une tâche interrompue passe avant celles qui attendent.
       const next = jobs.find((j) => j.status !== 'queued') || jobs[0];
       if (!next) break;
+      // Garde-fou : une même vidéo n'est jamais relancée plus de deux fois de suite.
+      tries.set(next.id, (tries.get(next.id) || 0) + 1);
+      if (tries.get(next.id) > 2) {
+        next.failed = 'arrêtée après plusieurs essais (rien ne sera refait sans votre accord)';
+        await library.saveJob(next).catch(() => {});
+        log(`« ${next.title} » : arrêtée après plusieurs essais.`);
+        continue;
+      }
       while (busy) await new Promise((r) => setTimeout(r, 300));
       if (!wakeLock) { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* pas de verrou */ } }
       await processJob(next);
@@ -544,6 +556,8 @@ async function processJob(job) {
         if (e.cancelled) throw e;
         log(`Incident : ${e.message}`);
         const fresh = (await library.jobs().catch(() => [])).find((j) => j.id === job.id);
+        // Déjà terminée (l'incident a eu lieu après le rangement) : on ne recommence surtout pas.
+        if (!fresh || fresh.status === 'done') { saved = 'noplan'; break; }
         if (!fresh || e.fatal || attempt >= 40 || (fresh.framesDone <= before && attempt >= 3)) throw e;
         job = fresh;
         log(`Reprise automatique à ${(job.framesDone / 30).toFixed(1)} s.`);
@@ -551,6 +565,7 @@ async function processJob(job) {
       }
     }
     if (saved === 'noplan') return;
+    if (saved === 'unsaved') { toast("La vidéo est prête, mais le téléphone a refusé de la ranger dans la bibliothèque (place insuffisante ?). Enregistrez-la maintenant depuis le lecteur.", [], 0); return; }
     if (saved) notifyDone(saved);
     await keepAlive.ding(saved ? `Vidéo prête — « ${job.title} »` : 'Vidéo prête — à enregistrer');
   } catch (e) {
@@ -583,6 +598,7 @@ function setProgress(job, status, pct = null) {
 
 /** Une vidéo, de la préparation à la bibliothèque. Lève une erreur si quelque chose casse en route. */
 async function renderJob(job) {
+  if (job.status === 'done') { await library.dropJob(job.id).catch(() => {}); return 'noplan'; }
   const scn = job.scenario;
   playingScn = scn;
   if (job.status !== 'encoding') {
@@ -651,8 +667,12 @@ async function renderJob(job) {
   setProgress(job, 'finalizing', 100);
   out.thumb = job.thumb;
   const saved = await showResult(out, job);
-  if (saved) await library.dropJob(job.id);
-  return saved;
+  // Terminée : c'est noté tout de suite, et quoi qu'il arrive ensuite, la
+  // vidéo ne sera jamais refabriquée. Ses images de travail sont effacées.
+  job.status = 'done'; job.libraryId = saved?.id || null; job.updated = Date.now();
+  try { await library.saveJob(job); } catch { /* le nettoyage ci-dessous suffit */ }
+  try { await library.dropJob(job.id); } catch (e) { log(`Nettoyage des images reporté (${e.message}).`); }
+  return saved || 'unsaved';
 }
 
 /**
@@ -687,7 +707,7 @@ async function assemble(job) {
 
 /** Les vidéos en cours et en attente, toujours à jour, même après réouverture. */
 async function renderTasks() {
-  const jobs = (await library.jobs().catch(() => [])).sort((x, y) => x.created - y.created);
+  const jobs = (await library.jobs().catch(() => [])).filter((j) => j.status !== 'done').sort((x, y) => x.created - y.created);
   ui.taskList.replaceChildren();
   for (const job of jobs) {
     const li = document.createElement('li'); li.dataset.id = job.id;
@@ -723,7 +743,8 @@ async function renderTasks() {
  */
 let resumedAutomatically = false;
 async function autoResume() {
-  const jobs = (await library.jobs().catch(() => [])).filter((j) => !j.failed);
+  for (const j of (await library.jobs().catch(() => [])).filter((x) => x.status === 'done')) await library.dropJob(j.id).catch(() => {});
+  const jobs = (await library.jobs().catch(() => [])).filter((j) => !j.failed && j.status !== 'done');
   await renderTasks();
   if (!jobs.length) return;
   const job = jobs.find((j) => j.status !== 'queued');
