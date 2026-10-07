@@ -268,6 +268,9 @@ export class SanctiMaps {
     this.iframe = iframe; this.clock = clock; this.style = style; this.log = log;
     this.memory = { view: null, continent: null, country: null, place: null, saint: null, mode: 'saints' };
     this.baseK = null; this.prev = null;
+    // La souris visible dans la vidéo : position dans la page du site, dernier clic, bouton enfoncé.
+    this.cursor = { x: 0, y: 0, visible: false, shownAt: 0, pressAt: -1e9, down: false };
+    this.useCursor = true; this.onCursor = null;
   }
   get W() { return this.iframe.contentWindow; }
   get D() { return this.iframe.contentDocument; }
@@ -380,7 +383,7 @@ export class SanctiMaps {
   }
 
   async closePanel() {
-    if (this.q('#panel.is-open')) { this.q('.panel__close')?.click(); await this.clock.wait(250); }
+    if (this.q('#panel.is-open')) { await this.click(this.q('.panel__close')); await this.clock.wait(250); }
   }
 
   // ------------------------------------------------------------ géométrie
@@ -430,6 +433,53 @@ export class SanctiMaps {
     return best;
   }
 
+  // ------------------------------------------------------------ souris
+
+  /** Le point à viser sur un élément : son centre, ramené dans l'écran. */
+  aim(target) {
+    if (Array.isArray(target)) return target;
+    const r = target?.getBoundingClientRect?.();
+    if (!r || (!r.width && !r.height)) return null;
+    const W = this.D.documentElement.clientWidth, H = this.D.documentElement.clientHeight;
+    return [Math.min(W - 4, Math.max(4, r.left + Math.min(r.width / 2, 60))), Math.min(H - 4, Math.max(4, r.top + r.height / 2))];
+  }
+
+  /**
+   * La souris va jusqu'à la cible comme une main : départ en douceur, léger
+   * arc, arrêt, puis clic (``press``). Le temps est celui de l'horloge du
+   * studio : dans la vidéo, le geste dure exactement le même nombre d'images.
+   */
+  async point(target, { press = true } = {}) {
+    if (!this.useCursor) return;
+    const goal = this.aim(target); if (!goal) return;
+    const c = this.cursor; const [tx, ty] = goal;
+    if (!c.visible) {
+      // Première apparition : elle entre depuis le bas de l'écran.
+      c.x = this.D.documentElement.clientWidth * 0.62; c.y = this.D.documentElement.clientHeight * 0.92;
+      c.visible = true; c.shownAt = this.clock.now();
+    }
+    const x0 = c.x, y0 = c.y, d = Math.hypot(tx - x0, ty - y0);
+    if (d > 3) {
+      const dur = Math.min(850, 280 + d * 0.5);
+      const nx = -(ty - y0) / d, ny = (tx - x0) / d;
+      const bend = Math.min(50, d * 0.1) * (Math.round(x0 + ty) % 2 ? 1 : -1);
+      const t0 = this.clock.now();
+      for (;;) {
+        await this.clock.frame();
+        const p = Math.min(1, (this.clock.now() - t0) / dur), e = ease(p), arc = Math.sin(Math.PI * e) * bend;
+        c.x = x0 + (tx - x0) * e + nx * arc; c.y = y0 + (ty - y0) * e + ny * arc;
+        this.onCursor?.(c);
+        if (p >= 1) break;
+      }
+    }
+    c.x = tx; c.y = ty; this.onCursor?.(c);
+    await this.clock.wait(90);
+    if (press) { c.pressAt = this.clock.now(); this.onCursor?.(c, 'press'); await this.clock.wait(120); }
+  }
+
+  /** Clic sur un élément du site, souris comprise. */
+  async click(el) { if (!el) return; await this.point(el); el.click(); }
+
   // ------------------------------------------------------------ gestes
   pointer(type, x, y, target) {
     const W = this.W;
@@ -465,6 +515,7 @@ export class SanctiMaps {
     seconds ??= Math.max(0.6, Math.abs(Math.log2(factor)) * this.style.zoom);
     const before = s.transform[0];
     const [ax, ay] = this.safePoint(anchor || this.center());
+    await this.point([ax, ay], { press: false });
     const total = Math.log(factor); let done = 0; const t0 = this.clock.now();
     while (true) {
       await this.clock.frame();
@@ -488,6 +539,8 @@ export class SanctiMaps {
     const [sx, sy] = this.safePoint([Math.min(Math.max(cx - dx / 2, g.left + 10), g.left + g.width - 10),
       Math.min(Math.max(cy - dy / 2, g.top + 10), g.top + g.height - 10)]);
     const before = [g.x, g.y]; const svg = this.q('svg.map');
+    await this.point([sx, sy], { press: false });
+    this.cursor.down = true; this.onCursor?.(this.cursor);
     this.pointer('pointerdown', sx, sy, svg);
     const t0 = this.clock.now(); let p = 0;
     while (p < 1) {
@@ -496,8 +549,10 @@ export class SanctiMaps {
       let mx = dx * ease(p), my = dy * ease(p);
       if (Math.hypot(mx, my) < 5 && p < 1) { mx = dx / dist * 5; my = dy / dist * 5; }
       this.pointer('pointermove', sx + mx, sy + my, svg);
+      if (this.useCursor) { this.cursor.x = sx + mx; this.cursor.y = sy + my; this.onCursor?.(this.cursor); }
     }
     this.pointer('pointerup', sx + dx, sy + dy, svg);
+    this.cursor.down = false; this.onCursor?.(this.cursor);
     await this.stabilize();
     const g2 = this.geometry();
     const moved = Math.hypot(g2.x - before[0], g2.y - before[1]);
@@ -517,7 +572,7 @@ export class SanctiMaps {
   }
   async fit() {
     const b = this.q('.zoom__fit');
-    if (b && !b.disabled && !b.closest('[hidden]')) await this.transition(() => b.click());
+    if (b && !b.disabled && !b.closest('[hidden]')) { await this.point(b); await this.transition(() => b.click()); }
   }
 
   // ------------------------------------------------------------ géographie
@@ -527,6 +582,7 @@ export class SanctiMaps {
     const s = this.snapshot();
     if (s.ficheOpen) await this.closeProfile();
     if (s.mode === 'world') return new Report('monde', true, 'déjà au monde');
+    await this.point(this.q('.trail .crumb'));
     await this.transition(() => this.q('.trail .crumb').click());
     this.memory.continent = this.memory.country = this.memory.place = null;
     return new Report('monde', this.snapshot().mode === 'world', 'vue mondiale');
@@ -539,6 +595,7 @@ export class SanctiMaps {
     if (s.ficheOpen) { await this.closeProfile(); s = this.snapshot(); }
     if (s.mode === 'continent' && this.continentOfTrail(s) === cid) return new Report('continent', true, 'déjà sur ce continent');
     if (s.mode === 'country' && this.continentOfTrail(s) === cid) {
+      await this.point(this.D.querySelectorAll('.trail .crumb')[1]);
       await this.transition(() => this.D.querySelectorAll('.trail .crumb')[1].click());
     } else {
       if (s.mode !== 'world') await this.goWorld();
@@ -546,6 +603,7 @@ export class SanctiMaps {
       let point = null;
       for (const c of members.slice(0, 6)) { point = this.countryPoint(c.id); if (point) break; }
       if (!point) return new Report('continent', false, 'aucun pays cliquable');
+      await this.point(point);
       await this.transition(() => this.tap(...point));
     }
     s = this.snapshot();
@@ -573,6 +631,7 @@ export class SanctiMaps {
       point = this.countryPoint(iso);
     }
     if (!point) return new Report('pays', false, `${label} introuvable sur la carte`);
+    await this.point(point);
     await this.transition(() => this.tap(...point));
     s = this.snapshot();
     const ok = s.mode === 'country' && s.trail[2] === label;
@@ -617,20 +676,21 @@ export class SanctiMaps {
   async openTab(tab) {
     // Les jeux s'ouvrent sur leur accueil, même si une partie était en cours.
     if (tab === 'jeux' && this.q('#panel.is-open .jeux .jeux__retour')) {
-      this.q('#panel.is-open .jeux .jeux__retour').click(); await this.clock.wait(400); return;
+      await this.click(this.q('#panel.is-open .jeux .jeux__retour')); await this.clock.wait(400); return;
     }
     const VIEW = { search: '.search', daily: '.daily', jeux: '.jeux', add: 'form.add', settings: '.settings-view' };
     const panel = this.q('#panel');
     const here = tab === 'menu' ? panel.classList.contains('is-menu') : !!panel.querySelector(VIEW[tab]);
     if (panel.classList.contains('is-open') && here && (tab === 'menu' || !panel.classList.contains('is-menu'))) return;
-    if (!panel.classList.contains('is-open')) { this.q('.panel-toggle').click(); await this.clock.wait(250); }
-    if (!panel.classList.contains('is-menu')) { this.q('.panel__back')?.click(); await this.clock.wait(150); }
+    if (!panel.classList.contains('is-open')) { await this.click(this.q('.panel-toggle')); await this.clock.wait(250); }
+    if (!panel.classList.contains('is-menu')) { await this.click(this.q('.panel__back')); await this.clock.wait(150); }
     if (tab === 'menu') { await this.clock.wait(300); return; }
-    this.q(`.menu__item[data-tab="${tab}"]`).click();
+    await this.click(this.q(`.menu__item[data-tab="${tab}"]`));
     await this.waitFor('panneau', () => panel.querySelector(VIEW[tab]), 5000);
     await this.clock.wait(400);
   }
   async type(input, text) {
+    await this.point(input);
     input.focus(); input.value = ''; input.dispatchEvent(new this.W.Event('input', { bubbles: true }));
     const per = 1000 / this.style.typing;
     for (const ch of text) {
@@ -644,7 +704,7 @@ export class SanctiMaps {
     if (scope) {
       const label = { saints: 'Saints', apparitions: 'Apparitions', miracles: 'Miracles' }[scope];
       const chip = [...this.D.querySelectorAll('.search .chip--scope')].find((c) => c.textContent.trim() === label);
-      if (chip && chip.getAttribute('aria-pressed') !== 'true') { chip.click(); await this.clock.wait(150); }
+      if (chip && chip.getAttribute('aria-pressed') !== 'true') { await this.click(chip); await this.clock.wait(150); }
     }
     await this.type(this.q('.search__input'), query);
     await this.clock.wait(300);
@@ -681,6 +741,7 @@ export class SanctiMaps {
   async openResult(chosen) {
     chosen.el.scrollIntoView({ block: 'nearest' });
     await this.clock.wait(300);
+    await this.point(chosen.el);
     await this.transition(() => chosen.el.click());
     await this.waitFiche();
     const s = this.snapshot();
@@ -707,7 +768,7 @@ export class SanctiMaps {
       const r = (m.querySelector('.marker__badge, .marker__ring, circle')).getBoundingClientRect();
       const x = r.left + r.width / 2, y = r.top + r.height / 2;
       if (x > h.left + 10 && x < h.right - 10 && y > h.top + 60 && y < h.bottom - 10) {
-        await this.clock.wait(300); this.tap(x, y);
+        await this.clock.wait(300); await this.point([x, y]); this.tap(x, y);
         await this.waitFiche(); await this.stabilize();
         const s = this.snapshot(); const ok = fold(s.ficheName) === fold(name);
         if (ok) this.memory.saint = s.ficheName;
@@ -762,9 +823,10 @@ export class SanctiMaps {
       .sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
     if (!pts.length) return new Report('repère', false, 'aucun repère visible');
     const t = pts.find((p) => p.count === 1) || pts[0];
+    await this.point([t.x, t.y]);
     this.tap(t.x, t.y);
     await this.waitFor('liste ou fiche', () => { const s = this.snapshot(); return s.picker || s.ficheOpen; }, 4000);
-    if (this.snapshot().picker) { await this.clock.wait(800); this.q('.picker.is-open .picker__item').click(); }
+    if (this.snapshot().picker) { await this.clock.wait(800); await this.click(this.q('.picker.is-open .picker__item')); }
     await this.waitFiche(); await this.stabilize();
     this.memory.saint = this.snapshot().ficheName;
     return new Report('fiche', true, `« ${this.memory.saint} »`);
@@ -796,7 +858,7 @@ export class SanctiMaps {
   }
   async closeProfile() {
     if (!this.snapshot().ficheOpen) return new Report('fermeture', true, 'aucune fiche');
-    this.q('.fiche__close').click();
+    await this.click(this.q('.fiche__close'));
     await this.waitFor('fiche fermée', () => !this.snapshot().ficheOpen, 5000);
     await this.stabilize();
     return new Report('fermeture', true);
@@ -831,7 +893,7 @@ export class SanctiMaps {
     if (Math.abs(offset) <= 7) {
       await this.openTab('daily');
       const btns = this.D.querySelectorAll('.daily__nav button');
-      for (let i = 0; i < Math.abs(offset); i++) { btns[offset > 0 ? 1 : 0].click(); await this.clock.wait(500); }
+      for (let i = 0; i < Math.abs(offset); i++) { await this.click(btns[offset > 0 ? 1 : 0]); await this.clock.wait(500); }
       const date = this.q('.daily__date')?.textContent || '';
       const ok = date.includes(String(target.getDate())) && fold(date).includes(fold(MONTHS[target.getMonth()]));
       return new Report('calendrier', ok, `${date} — ${this.results().length} fiche(s)`);
@@ -850,6 +912,7 @@ export class SanctiMaps {
     if (s.mode === 'world') return new Report('niveau', true, 'déjà au monde');
     const crumbs = this.D.querySelectorAll('.trail .crumb');
     const target = s.mode === 'country' ? crumbs[1] : crumbs[0];
+    await this.point(target);
     await this.transition(() => target.click());
     s = this.snapshot();
     if (s.mode === 'continent') { this.memory.country = null; this.memory.place = null; }
@@ -863,7 +926,7 @@ export class SanctiMaps {
     const btn = this.q(kind === 'lieux' ? '.detail__lieux-btn' : '.detail__croises-btn');
     const what = kind === 'lieux' ? 'lieux marqués' : 'saints croisés';
     if (!btn) return new Report(what, false, `la fiche de ${this.snapshot().ficheName} n'en indique pas`);
-    if (!btn.classList.contains('is-on')) await this.transition(() => btn.click());
+    if (!btn.classList.contains('is-on')) { await this.point(btn); await this.transition(() => btn.click()); }
     const on = !!this.q(kind === 'lieux' ? '.detail__lieux-btn.is-on' : '.detail__croises-btn.is-on');
     return new Report(what, on, btn.textContent.trim());
   }
@@ -941,6 +1004,7 @@ export class SanctiMaps {
     const name = (el.textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 60);
     el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     await this.clock.wait(350);
+    await this.point(el);
     el.click();
     await this.clock.wait(150);
     // Le bouton a fait bouger la carte (« Voir sur la carte », « Voir la fiche ») : on suit au ralenti.
@@ -967,6 +1031,7 @@ export class SanctiMaps {
     if (!opt) return new Report('paramètre', false, `valeur « ${value} » inconnue (${[...select.options].map((o) => o.textContent).join(', ')})`);
     select.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     await this.clock.wait(400);
+    await this.point(select);
     select.value = opt.value;
     select.dispatchEvent(new this.W.Event('change', { bubbles: true }));
     await this.clock.wait(600);
@@ -1019,7 +1084,7 @@ export class SanctiMaps {
     if (what === 'paliers' && !this.q(SEL.paliers)) await this.openTab('jeux');   // ils sont sur l'accueil des jeux
     const d = this.q(SEL[what]);
     if (!d) return new Report('dépliage', false, `« ${what} » absent de l'écran`);
-    if (open === undefined || d.open !== open) { d.querySelector('summary').click(); await this.clock.wait(500); }
+    if (open === undefined || d.open !== open) { await this.click(d.querySelector('summary')); await this.clock.wait(500); }
     await this.stabilize();
     return new Report('dépliage', true, `${what} ${d.open ? 'déplié' : 'replié'}`);
   }
@@ -1029,12 +1094,12 @@ export class SanctiMaps {
     if (!this.q('.jeux__quiz')) return new Report('quiz', false, 'aucune question de quiz à l\'écran');
     if (!this.q('.jeux__revele')) {
       const show = this.pressables('#panel').find((e) => fold(e.textContent).startsWith('afficher la reponse'));
-      if (show) { show.click(); await this.clock.wait(900); }
+      if (show) { await this.click(show); await this.clock.wait(900); }
     }
     const revealed = this.q('.jeux__revele')?.textContent.replace(/^[^:]*:\s*/, '').trim();
     if (!revealed) return new Report('quiz', false, 'réponse non affichable dans ce mode');
     const choice = [...this.D.querySelectorAll('.jeux__reponse')].find((b) => fold(b.textContent) === fold(revealed));
-    if (choice) { choice.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); await this.clock.wait(400); choice.click(); }
+    if (choice) { choice.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); await this.clock.wait(400); await this.click(choice); }
     else return this.typeField(revealed, true);
     await this.clock.wait(700);
     return new Report('quiz', true, `réponse : ${revealed}`);
@@ -1045,7 +1110,7 @@ export class SanctiMaps {
     const label = { saints: 'Saints', apparitions: 'Apparitions', miracles: 'Miracles' }[corpus];
     const btn = [...this.D.querySelectorAll('.corpus__btn')].find((b) => b.textContent.trim() === label)
       || this.D.querySelectorAll('.corpus__btn')[['saints', 'apparitions', 'miracles'].indexOf(corpus)];
-    if (btn.getAttribute('aria-pressed') !== 'true') { btn.click(); await this.clock.wait(400); }
+    if (btn.getAttribute('aria-pressed') !== 'true') { await this.click(btn); await this.clock.wait(400); }
     await this.stabilize();
     const ok = this.snapshot().corpus === corpus;
     this.memory.mode = corpus;

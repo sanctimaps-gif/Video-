@@ -97,6 +97,8 @@ export class Director {
   async play(scenario, { rehearsal = false } = {}) {
     this.stopped = false;
     this.sm.style = scaled(STYLES[scenario.style] || STYLES.documentary, scenario.speed || 1);
+    // La souris à l'écran fait partie du scénario (répétition comprise : elle prend du temps).
+    this.sm.useCursor = scenario.cursor !== false;
     const reports = {};
     // Retard accumulé (ms) : une action plus longue que prévu est rattrapée
     // sur les attentes suivantes, pour que la vidéo garde sa durée.

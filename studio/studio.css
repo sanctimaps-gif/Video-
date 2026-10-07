@@ -173,3 +173,14 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .timeline .scene-head { grid-row: 1; }
 .timeline .lbl { grid-column: 2; font-weight: 500; }
 .timeline .st { grid-column: 3; }
+
+/* La souris de l'aperçu. */
+.stage .cursor { position: absolute; left: 0; top: 0; z-index: 5; pointer-events: none; width: 0; height: 0; filter: drop-shadow(0 1.5px 2px rgba(0,0,0,.35)); }
+.stage .cursor[hidden] { display: none; }
+.stage .cursor svg { position: absolute; left: -1px; top: -1px; transform-origin: 1px 1px; transition: transform .12s; }
+.stage .cursor span { position: absolute; left: -15px; top: -15px; width: 30px; height: 30px; border-radius: 50%; opacity: 0; }
+.stage .cursor.press svg { animation: cur-press .25s ease-out; }
+.stage .cursor.press span { animation: cur-ring .45s ease-out; }
+.stage .cursor.down svg { transform: scale(.92); }
+@keyframes cur-press { 0%, 40% { transform: scale(.86); } 100% { transform: scale(1); } }
+@keyframes cur-ring { 0% { opacity: 1; transform: scale(.25); background: rgba(179,38,58,.35); box-shadow: 0 0 0 2px rgba(255,255,255,.8); } 100% { opacity: 0; transform: scale(1); background: rgba(179,38,58,0); box-shadow: 0 0 0 2px rgba(255,255,255,0); } }

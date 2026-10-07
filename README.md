@@ -36,6 +36,11 @@ français, ajout, suppression) ; **🤖 Génération automatique** génère puis
 C'est un moteur de règles de réalisation qui tourne sur l'appareil, sans serveur ni modèle de
 langage : il n'invente ni commande, ni lieu, ni fait.
 
+**Souris à l'écran** (case cochée par défaut) : avant chaque geste — toucher un pays, un bouton,
+une fiche, un réglage, zoomer, faire glisser la carte — une flèche de souris va jusqu'à la cible
+d'un mouvement naturel (départ et arrêt en douceur, léger arc), puis clique avec une onde ; elle
+reste enfoncée pendant un glisser. Elle est dessinée dans la vidéo et visible dans l'aperçu.
+
 **Vidéos en arrière-plan** : « 🎬 Exporter » ajoute la vidéo à une file d'attente ; les vidéos
 se fabriquent l'une après l'autre (en attente → préparation des scènes → génération → assemblage
 → finalisation) pendant qu'on continue d'utiliser le studio. L'état est rangé sur l'appareil et

@@ -657,7 +657,8 @@ export class Realisateur {
     const floor = (s) => {
       const real = actual[s.id];
       if (['show_profile', 'hold'].includes(s.action) || real == null) return s.action === 'show_profile' ? Math.min(s.duration, Math.max(4, (s.minimum || 5) * 0.8)) : Math.min(s.duration, 1.5);
-      return real + 0.25;
+      // Une scène titrée reste à l'écran le temps de lire son titre.
+      return Math.max(real + 0.25, s.caption?.title && sc.captions !== false ? Math.min(s.duration, 2.5) : 0);
     };
     const mins = sc.shots.map(floor);
     sc.shots.forEach((s, i) => { if (s.duration < mins[i]) s.duration = +mins[i].toFixed(1); });

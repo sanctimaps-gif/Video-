@@ -20,7 +20,7 @@ const ui = {
   recHint: $('#rec-hint'), total: $('#total'), capture: $('#capture'), progress: $('#progress'),
   progressFill: $('#progress-fill'), progressText: $('#progress-text'), cmdResult: $('#cmd-result'),
   toast: $('#toast'), resume: $('#resume'), resumeText: $('#resume-text'), resumeLog: $('#resume-log'), resumeGo: $('#resume-go'), resumeDrop: $('#resume-drop'),
-  auto: $('#auto'), steps: $('#steps'), versions: $('#versions'), reasoning: $('#reasoning'), checks: $('#checks'), captions: $('#captions'),
+  auto: $('#auto'), steps: $('#steps'), versions: $('#versions'), reasoning: $('#reasoning'), checks: $('#checks'), captions: $('#captions'), cursor: $('#cursor'),
   board: $('#board'), edit: $('#edit'), improve: $('#improve'), addScene: $('#add-scene'), caption: $('#caption'), tasks: $('#tasks'), taskList: $('#task-list'),
   addPause: $('#add-pause'), clear: $('#clear'), library: $('#library'), libList: $('#library-list'), libUsage: $('#library-usage'),
   demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
@@ -97,14 +97,26 @@ async function loadStage(aspect = ui.aspect.value, styleName = ui.style.value) {
   iframe.title = 'SanctiMaps';
   iframe.src = `studio/frame.html?vt=1&src=${encodeURIComponent(SRC)}`;
   ui.stage.append(iframe);
+  // La souris de l'aperçu (dans la vidéo, le rendu la dessine lui-même).
+  const pointer = document.createElement('div'); pointer.className = 'cursor'; pointer.hidden = true;
+  pointer.innerHTML = '<svg viewBox="-1 -1 15 23" width="19" height="29" aria-hidden="true"><path d="M0 0L0 17L4.4 13.2L7.4 20L10.2 18.8L7.3 12.2L12.8 12.2Z" fill="#fff" stroke="#111" stroke-width="1.3" stroke-linejoin="round"/></svg><span></span>';
+  ui.stage.append(pointer);
   layout();
   await new Promise((r) => iframe.addEventListener('load', r, { once: true }));
   // Le studio tient l'horloge des animations dès le chargement (voir frame.html).
   clock.attach(iframe.contentWindow);
   sm = new SanctiMaps(iframe, clock, STYLES[styleName] || STYLES.documentary, log);
+  sm.onCursor = (c, event) => {
+    if (rendering) return;
+    pointer.hidden = !c.visible; pointer.classList.toggle('down', c.down);
+    pointer.style.transform = `translate(${c.x}px, ${c.y}px)`;
+    if (event === 'press') { pointer.classList.remove('press'); void pointer.offsetWidth; pointer.classList.add('press'); }
+  };
   // La page du cadre est remplacée par celle du site : on attend qu'elle soit là.
   await sm.waitFor('page SanctiMaps', () => iframe.contentDocument?.querySelector('#map-host'), 60000);
   await sm.open(data);
+  // La préparation de la carte ne compte pas : la souris n'apparaît qu'au premier geste de la vidéo.
+  sm.cursor.visible = false; sm.onCursor?.(sm.cursor);
   director = new Director(sm, data, {
     onShot: (shot, rehearsal) => {
       if (cancelId && rendering) throw Object.assign(new Error('vidéo annulée'), { renderFailure: true, fatal: true, cancelled: true });
@@ -267,7 +279,7 @@ async function plan() {
   try {
     const r = new Realisateur(data, { dryCommand, memory: sm?.memory });
     directed = await r.direct(text, { aspect: ui.aspect.value, style: ui.style.value }, onStep);
-    for (const v of Object.values(directed.variants)) v.captions = ui.captions.checked;
+    for (const v of Object.values(directed.variants)) { v.captions = ui.captions.checked; v.cursor = ui.cursor.checked; }
     await onStep('ready', '▶ Storyboard prêt : prévisualisez, améliorez ou exportez.');
     steps.get('ready').classList.remove('is-wait');
     chooseVariant(directed.recommended);
@@ -603,6 +615,7 @@ async function renderJob(job) {
         }
       } });
     await renderer.start();
+    renderer.cursorOf = () => (sm.useCursor ? { ...sm.cursor, now: clock.now() } : null);
     ui.progress.hidden = false;
     let lastBeat = Date.now(), lastUi = 0;
     const onFrame = () => {
@@ -1410,6 +1423,7 @@ ui.addScene.addEventListener('click', async () => {
   if (shots) addShots(shots);
 });
 ui.captions.addEventListener('change', () => { if (scenario) { scenario.captions = ui.captions.checked; renderTimeline(); } });
+ui.cursor.addEventListener('change', () => { if (scenario) { scenario.cursor = ui.cursor.checked; save(); } });
 ui.capture.addEventListener('click', captureTab);
 ui.capture.hidden = !canRecord();
 ui.play.addEventListener('click', playOnly);

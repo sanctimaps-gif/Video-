@@ -315,6 +315,38 @@ export class FrameRenderer {
     this.mapMs += performance.now() - t0;
     await this.drawOverlay();
     this.drawCaption();
+    this.drawCursor();
+  }
+
+  /**
+   * La souris, par-dessus tout : une flèche blanche cerclée de noir, qui
+   * « s'enfonce » au clic avec une onde rouge. ``cursorOf()`` donne sa
+   * position (pixels de la page du site) et l'heure de l'horloge du studio.
+   */
+  drawCursor() {
+    const c = this.cursorOf?.(); if (!c?.visible) return;
+    const ctx = this.ctx, s = this.scale, x = c.x * s, y = c.y * s;
+    const age = c.now - c.pressAt;
+    const fade = Math.min(1, Math.max(0, (c.now - c.shownAt) / 250));
+    ctx.save();
+    ctx.globalAlpha = fade;
+    if (age >= 0 && age < 450) {
+      const k = age / 450;
+      ctx.beginPath(); ctx.arc(x, y, (6 + 24 * k) * s, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(179, 38, 58, ${0.35 * (1 - k)})`; ctx.fill();
+      ctx.lineWidth = 2.5 * s; ctx.strokeStyle = `rgba(255, 255, 255, ${0.8 * (1 - k)})`; ctx.stroke();
+    }
+    if (c.down) { ctx.beginPath(); ctx.arc(x, y, 9 * s, 0, Math.PI * 2); ctx.fillStyle = 'rgba(179, 38, 58, 0.3)'; ctx.fill(); }
+    const u = 1.45 * s * (age >= 0 && age < 160 ? 0.86 : c.down ? 0.92 : 1);
+    ctx.translate(x, y); ctx.scale(u, u);
+    ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(0, 17); ctx.lineTo(4.4, 13.2); ctx.lineTo(7.4, 20); ctx.lineTo(10.2, 18.8);
+    ctx.lineTo(7.3, 12.2); ctx.lineTo(12.8, 12.2); ctx.closePath();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1.5;
+    ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.lineJoin = 'round'; ctx.lineWidth = 1.3; ctx.strokeStyle = '#111'; ctx.stroke();
+    ctx.restore();
   }
 
   /**
