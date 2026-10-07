@@ -215,6 +215,50 @@ export class SiteData {
     }
     return chosen.map((c) => c.n);
   }
+
+  // ------------------------------------------- données pour le réalisateur
+
+  /** Les lieux marqués par chaque saint (naissance, fondation, mort, sépulture…), et leurs liens. */
+  async lieux() { if (!this._lieux) this._lieux = this.get('lieux.json').catch(() => ({ lieux: {}, liens: {} })); return this._lieux; }
+  async saintById(id) {
+    if (!this._byId) this._byId = this.saints().then((all) => new Map(all.map((s) => [s.id, s])));
+    return (await this._byId).get(id) || null;
+  }
+  /**
+   * Le saint que désigne un nom (« Louis », « saint Louis », « Jeanne d'Arc ») :
+   * le nom le plus proche, puis le plus documenté — comme la recherche du site.
+   * ``score`` dit la qualité de la correspondance (100 : nom exact).
+   */
+  async findSaint(name) {
+    const q = fold(name).replace(/^(saint|sainte|saints|bienheureux|bienheureuse|st|ste) /, '');
+    if (!q || q.length < 3) return null;
+    const texts = await this.texts(); let best = null;
+    for (const s of await this.saints()) {
+      const n = fold(s.name?.fr || s.name);
+      let score = n === q ? 100 : n.startsWith(q + ' ') ? 60 : ` ${n} `.includes(` ${q} `) ? 30 : 0;
+      if (!score) continue;
+      score += Math.min(25, this.richness(s, texts, { fame: true }));
+      if (!best || score > best.score) best = { saint: s, score };
+    }
+    return best;
+  }
+  /** Le pays où tombe un point de la carte (contour exact du pays). */
+  countryAt(x, y) {
+    if (!this._paths) {
+      this._ctx = (typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')).getContext('2d');
+      this._paths = new Map();
+    }
+    let best = null;
+    for (const c of this.world.countries) {
+      const [x0, y0, x1, y1] = c.bbox;
+      if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+      if (!this._paths.has(c.id)) this._paths.set(c.id, new Path2D(c.d));
+      if (this._ctx.isPointInPath(this._paths.get(c.id), x, y) && (!best || c.area < best.area)) best = c;
+    }
+    return best?.id || null;
+  }
+  /** Les saints recensés dans un pays (données du site). */
+  async saintsIn(iso) { return (await this.saints()).filter((s) => s.country === iso); }
 }
 
 // ------------------------------------------------------------- adaptateur

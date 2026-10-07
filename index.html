@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SanctiMaps Vidéo">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="stylesheet" href="studio/studio.css?v=20261003e">
+<link rel="stylesheet" href="studio/studio.css?v=20261007f">
 </head>
 <body>
 <div class="resume-modal" id="resume" hidden role="dialog" aria-modal="true" aria-labelledby="resume-title">
@@ -30,20 +30,22 @@
   <img class="logo" src="studio/icons/logo-256.png" alt="SanctiMaps.fr" width="56" height="56">
   <div>
     <h1>Studio vidéo SanctiMaps</h1>
-    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme. <span class="version">version 2026-10-03 e</span></div>
+    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme. <span class="version">version 2026-10-07 f</span></div>
   </div>
 </header>
 
 <main>
   <section class="controls">
-    <div class="card">
-      <h2>Votre vidéo</h2>
-      <textarea id="request" aria-label="Description de la vidéo">Fais une vidéo de 45 secondes qui commence avec une vue du monde, descend progressivement vers la France, puis Paris, affiche la fiche du saint sélectionné et revient progressivement à une vue de la France.</textarea>
+    <div class="card director">
+      <h2>🎬 Réalisateur IA</h2>
+      <textarea id="request" aria-label="Description de la vidéo" placeholder="Décris la vidéo que tu veux créer…">Crée une vidéo de 45 secondes sur saint Louis. Commence par une vue du monde, arrive progressivement en France, présente Paris, cherche saint Louis, affiche sa fiche, montre ses lieux associés et termine avec une vue de la France.</textarea>
       <div class="chips" aria-label="Exemples">
-        <button data-example="Fais-moi une vidéo de 30 secondes sur les saints en France.">France, 30 s</button>
-        <button data-example="Crée une vidéo verticale de 60 secondes présentant les saints de France. Commence par le monde, rapproche-toi progressivement de la France, montre plusieurs zones puis termine avec une fiche intéressante.">Vertical, 60 s</button>
-        <button data-example="Une vidéo cinématique de 40 secondes : les saints du XIIe siècle en Italie, puis passe en mode apparitions et montre Lourdes.">Italie et Lourdes</button>
-        <button data-example="Vidéo carrée de 25 secondes : cherche saint Louis puis montre les saints fêtés aujourd'hui.">Saint Louis</button>
+        <button data-example="Fais-moi une vidéo de 60 secondes sur saint Louis.">Saint Louis, 60 s</button>
+        <button data-example="Fais une vidéo verticale de 60 secondes sur saint Louis. Commence par montrer la France, rapproche-toi de Paris, présente saint Louis, montre les lieux importants associés à sa vie, puis termine avec une vue générale de la France.">Saint Louis, vertical</button>
+        <button data-example="Une vidéo de 45 secondes qui raconte la vie de sainte Thérèse d'Avila et ses fondations.">Thérèse d'Avila</button>
+        <button data-example="Crée une vidéo de 45 secondes sur Jeanne d'Arc avec une introduction dynamique et une carte montrant ses déplacements.">Jeanne d'Arc</button>
+        <button data-example="Fais-moi une vidéo de 30 secondes sur les saints en Italie, montre plusieurs villes.">Italie, 30 s</button>
+        <button data-example="Vidéo carrée de 25 secondes : les saints fêtés aujourd'hui, puis ouvre les jeux.">Fêtés aujourd'hui</button>
       </div>
       <div class="row">
         <label class="field">Format
@@ -51,35 +53,48 @@
         </label>
         <label class="field">Style
           <select id="style">
+            <option value="auto">Automatique</option>
             <option value="documentary">Documentaire</option><option value="cinematic">Cinématique</option>
             <option value="educational">Pédagogique</option><option value="slow">Lent</option><option value="fast">Rapide</option>
           </select>
         </label>
       </div>
+      <label class="check"><input type="checkbox" id="captions" checked> Titres à l'écran (nom, dates, lieux — tirés de SanctiMaps)</label>
       <div class="row">
-        <button id="plan">Préparer</button>
-        <button id="play">Lire</button>
+        <button id="plan" class="primary">✨ Générer avec l'IA</button>
+        <button id="auto" title="Génère le storyboard puis lance la vidéo en arrière-plan">🤖 Génération automatique</button>
       </div>
-      <div class="row">
-        <button id="shoot" class="primary">Enregistrer la vidéo (MP4)</button>
-      </div>
-      <div class="row">
-        <button id="capture" hidden>Filmer l'onglet en direct</button>
-        <button id="stop" disabled>Arrêter</button>
-      </div>
-      <label class="check"><input type="checkbox" id="keep-music" checked> Ne pas couper ma musique pendant le rendu</label>
-      <p class="hint" id="rec-hint"></p>
+      <ol class="steps" id="steps" hidden></ol>
+      <div class="versions" id="versions" hidden></div>
+      <details class="think" id="reasoning" hidden><summary>Réflexion du réalisateur</summary><dl></dl></details>
+      <details class="think" id="checks" hidden><summary>Vérification</summary><ul></ul></details>
+      <p class="hint">Le réalisateur comprend la demande, raisonne (sujet, lieux, ordre, rythme, conclusion), puis écrit un storyboard avec les commandes existantes de l'application et les données de SanctiMaps. Il fonctionne sur l'appareil, sans serveur : il n'invente ni commande ni fait.</p>
     </div>
 
-    <div class="card">
-      <h2>Scénario <span id="total" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div class="card storyboard" id="board">
+      <h2>Storyboard <span id="total" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div class="row board-actions">
+        <button id="edit">✏️ Modifier</button>
+        <button id="improve">✨ Améliorer</button>
+        <button id="play">▶ Prévisualiser</button>
+      </div>
+      <div class="row">
+        <button id="shoot" class="primary">🎬 Exporter la vidéo (MP4)</button>
+      </div>
       <ol class="timeline" id="timeline"></ol>
       <p class="notes" id="notes"></p>
-      <p class="hint">« Préparer » écrit le scénario à partir de votre texte. Vous pouvez ensuite changer la durée d'un plan, le déplacer (↑ ↓) ou le supprimer (✕), et ajouter des actions testées dans « Piloter la carte ».</p>
-      <div class="row">
+      <div class="row edit-only">
+        <button id="add-scene">＋ Scène</button>
         <button id="add-pause">＋ Pause</button>
         <button id="clear">Vider</button>
       </div>
+      <p class="hint edit-only">Changez la durée d'une scène, déplacez-la (↑ ↓), remplacez son action (✎, en français : « Va à Rome », « Ouvre les jeux »…) ou supprimez-la (✕). « ＋ Scène » ajoute une commande avant la conclusion ; « Piloter la carte » permet aussi d'essayer puis d'ajouter.</p>
+      <div class="row">
+        <button id="capture" hidden>Filmer l'onglet en direct</button>
+        <button id="stop" disabled>Arrêter l'aperçu</button>
+      </div>
+      <label class="check"><input type="checkbox" id="keep-music" checked> Ne pas couper ma musique pendant le rendu</label>
+      <p class="hint" id="rec-hint"></p>
     </div>
 
     <div class="card">
@@ -186,9 +201,15 @@
     <div class="stage-wrap" id="stage-wrap">
       <div class="stage" id="stage"></div>
       <div class="overlay" id="overlay"></div>
+      <div class="caption" id="caption" hidden><b></b><span></span></div>
       <div class="progress" id="progress" hidden><div class="progress__bar"><span id="progress-fill"></span></div><span id="progress-text"></span></div>
     </div>
     <div class="status"><span id="state">État : chargement</span><span id="memory"></span></div>
+    <div class="card after tasks" id="tasks" hidden style="margin-top:12px">
+      <h2>Vidéos en cours</h2>
+      <ul class="task-list" id="task-list"></ul>
+      <p class="hint">Les vidéos se fabriquent l'une après l'autre, en arrière-plan : vous pouvez continuer à préparer d'autres storyboards. Chaque vidéo terminée va dans la bibliothèque.</p>
+    </div>
     <div class="card result after" id="result" hidden></div>
     <div class="card after library" id="library" style="margin-top:12px">
       <h2>Bibliothèque</h2>
@@ -205,14 +226,15 @@
 
 <!-- Chaque mise à jour change ce numéro : Safari recharge alors tous les modules au lieu de garder les anciens. -->
 <script type="importmap">{"imports": {
-  "./studio/director.js": "./studio/director.js?v=20261003e",
-  "./studio/keepalive.js": "./studio/keepalive.js?v=20261003e",
-  "./studio/library.js": "./studio/library.js?v=20261003e",
-  "./studio/planner.js": "./studio/planner.js?v=20261003e",
-  "./studio/recorder.js": "./studio/recorder.js?v=20261003e",
-  "./studio/render.js": "./studio/render.js?v=20261003e",
-  "./studio/sanctimaps.js": "./studio/sanctimaps.js?v=20261003e"
+  "./studio/director.js": "./studio/director.js?v=20261007f",
+  "./studio/keepalive.js": "./studio/keepalive.js?v=20261007f",
+  "./studio/library.js": "./studio/library.js?v=20261007f",
+  "./studio/planner.js": "./studio/planner.js?v=20261007f",
+  "./studio/recorder.js": "./studio/recorder.js?v=20261007f",
+  "./studio/render.js": "./studio/render.js?v=20261007f",
+  "./studio/sanctimaps.js": "./studio/sanctimaps.js?v=20261007f",
+  "./studio/realisateur.js": "./studio/realisateur.js?v=20261007f"
 }}</script>
-<script type="module" src="studio/app.js?v=20261003e"></script>
+<script type="module" src="studio/app.js?v=20261007f"></script>
 </body>
 </html>

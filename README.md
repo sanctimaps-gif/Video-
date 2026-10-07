@@ -5,6 +5,44 @@
 Le studio s'utilise directement dans le navigateur : on décrit la vidéo, il prépare
 le scénario, pilote la carte de [sanctimaps.fr](https://sanctimaps.fr/) en direct et la filme.
 
+### Réalisateur IA
+
+On écrit ce qu'on veut voir (« Crée une vidéo de 45 secondes sur saint Louis… ») puis
+« ✨ Générer avec l'IA ». Le réalisateur (`studio/realisateur.js`) ne transforme pas la
+phrase en commandes dans l'ordre : il
+
+1. **comprend** la demande : sujet, saint (le plus documenté en cas d'homonymes), pays, villes,
+   lieux voulus (fondations, mort, sépulture…), durée (45 s par défaut), format, ton, début et
+   fin souhaités, et ce qui n'est pas faisable (musique, voix off, 3D) ;
+2. **raisonne** (« Réflexion du réalisateur ») : où commencer, quels lieux comptent d'après les
+   données de SanctiMaps (`lieux.json` : naissance, fondation, mort, sépulture…), quelle
+   progression géographique (chronologique, comme une vie), quelles informations, quelle fin ;
+3. écrit un **storyboard** : chaque scène a une fonction (introduction, localisation,
+   présentation, lieux, conclusion), une action existante du metteur en scène, une transition,
+   un titre à l'écran et un texte de narration tirés des seules données du site ;
+4. **règle le rythme** : la durée totale tombe exactement sur la durée demandée ; les scènes
+   facultatives partent d'abord, puis la caméra s'accélère, jamais la lecture des fiches ;
+5. **vérifie et corrige** : commandes existantes, lieux et saints trouvés dans les données, ordre
+   logique (une fiche lue est d'abord ouverte), introduction et conclusion, durées, temps morts,
+   éléments demandés présents ; ce qui est impossible est dit clairement ;
+6. propose **trois versions** (informative, dynamique, documentaire) et recommande la plus adaptée.
+
+Les commandes viennent de l'analyseur du pilotage (joué « à blanc ») : le réalisateur n'utilise
+que ce qui existe, avec « Appuie sur … » en secours. Avant le tournage, la répétition joue chaque
+scène sur la vraie carte, retire les impossibles et recale le minutage sur les durées réelles.
+**✨ Améliorer** reprend un storyboard (même retouché à la main) sans changer le sujet ;
+**✏️ Modifier** ouvre l'édition (durée, ordre, remplacement d'une action par une commande en
+français, ajout, suppression) ; **🤖 Génération automatique** génère puis lance la vidéo.
+C'est un moteur de règles de réalisation qui tourne sur l'appareil, sans serveur ni modèle de
+langage : il n'invente ni commande, ni lieu, ni fait.
+
+**Vidéos en arrière-plan** : « 🎬 Exporter » ajoute la vidéo à une file d'attente ; les vidéos
+se fabriquent l'une après l'autre (en attente → préparation des scènes → génération → assemblage
+→ finalisation) pendant qu'on continue d'utiliser le studio. L'état est rangé sur l'appareil et
+reprend après un rechargement ; un message discret annonce la fin, avec « Ouvrir » et
+« Enregistrer sur mon téléphone » (feuille de partage d'iOS : aucune page web ne peut enregistrer
+dans Photos sans ce geste). Il n'y a pas de serveur : la vidéo est calculée par le téléphone.
+
 * **Bibliothèque** : chaque vidéo terminée est rangée sur l'appareil (IndexedDB), avec sa
   vignette, son titre, sa date, sa durée, son format et son scénario : lire, enregistrer dans
   Photos / partager, télécharger, renommer, reprendre le scénario, supprimer. Rien ne quitte

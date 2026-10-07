@@ -114,3 +114,62 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .toast[hidden] { display: none; }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: .9rem; }
 .check input { width: 18px; height: 18px; flex: none; }
+
+/* ------------------------------------------------------- réalisateur IA */
+.director textarea { min-height: 120px; }
+.steps { list-style: none; margin: 12px 0 0; padding: 10px 12px; background: var(--bg); border-radius: 10px; font-size: .86rem; line-height: 1.6; }
+.steps[hidden] { display: none; }
+.steps li.is-wait { color: var(--muted); }
+.versions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.versions[hidden] { display: none; }
+.versions button { padding: 8px 6px; font-size: .82rem; text-align: left; line-height: 1.3; }
+.versions button b { display: block; font-size: .9rem; }
+.versions button small { color: var(--muted); }
+.versions button.is-on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--panel); }
+.versions button .reco { color: var(--accent); font-weight: 600; font-size: .72rem; display: block; }
+.think { margin-top: 10px; font-size: .85rem; }
+.think[hidden] { display: none; }
+.think summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.think dl { margin: 8px 0 0; }
+.think dt { font-weight: 600; margin-top: 6px; }
+.think dd { margin: 2px 0 0; color: var(--muted); }
+.think ul { margin: 8px 0 0; padding-left: 0; list-style: none; }
+.think li { margin: 4px 0; }
+.think li.warn { color: var(--bad); }
+/* Storyboard : lecture simple, édition sur demande. */
+.storyboard .edit, .storyboard .edit-only { display: none; }
+.storyboard.editing .edit { display: flex; }
+.storyboard.editing .edit-only { display: flex; }
+.storyboard.editing p.edit-only { display: block; }
+.storyboard.editing #edit { background: var(--accent); color: var(--accent-ink); }
+.timeline .scene-head { grid-column: 2 / 4; font-size: .74rem; color: var(--muted); letter-spacing: .02em; }
+.timeline .scene-cap { grid-column: 2 / 4; font-size: .8rem; color: var(--muted); font-style: italic; }
+.timeline .lbl .dur-ro { color: var(--muted); font-variant-numeric: tabular-nums; }
+.board-actions button { padding: 9px 6px; }
+/* Titres à l'écran pendant l'aperçu (la vidéo les dessine elle-même). */
+.caption { position: absolute; left: 4%; bottom: 7%; z-index: 3; max-width: 52%; padding: 10px 14px 10px 18px; border-radius: 10px;
+  background: rgba(24, 18, 12, .74); color: #fff; pointer-events: none; transition: opacity .35s; border-left: 4px solid #b3263a; }
+.caption[hidden] { display: block; opacity: 0; }
+.caption.top { top: 11%; bottom: auto; }
+.caption b { display: block; font: 600 1.05rem/1.25 Georgia, serif; }
+.caption span { display: block; font-size: .78rem; opacity: .9; margin-top: 2px; }
+.caption span:empty { display: none; }
+/* Vidéos en cours : discret, jamais bloquant. */
+.task-list { list-style: none; margin: 0; padding: 0; }
+.task-list li { padding: 8px 0; border-top: 1px solid var(--line); font-size: .86rem; }
+.task-list li:first-child { border-top: 0; }
+.task-list .task-title { font-weight: 600; }
+.task-list .task-state { color: var(--muted); font-size: .8rem; }
+.task-list .task-bar { height: 6px; background: var(--chip); border-radius: 99px; overflow: hidden; margin: 6px 0; }
+.task-list .task-bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+.task-list .task-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.task-list li.is-failed .task-state { color: var(--bad); }
+.lib-done { color: var(--ok); font-size: .74rem; font-weight: 600; }
+.toast .toast-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.toast .toast-actions button { padding: 7px 12px; font-size: .85rem; background: rgba(255,255,255,.14); color: #fff; border-color: rgba(255,255,255,.25); }
+.toast .toast-actions button.primary { background: #fff; color: #022254; }
+.toast .toast-close { float: right; background: none; border: 0; color: #fff; padding: 0 0 0 10px; font-size: 1.1rem; }
+.timeline .t { grid-column: 1; grid-row: 1; }
+.timeline .scene-head { grid-row: 1; }
+.timeline .lbl { grid-column: 2; font-weight: 500; }
+.timeline .st { grid-column: 3; }

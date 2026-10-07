@@ -99,6 +99,14 @@ export class KeepAlive {
     }
   }
 
+  /** Le carillon d'une vidéo terminée, sans arrêter la piste (d'autres vidéos peuvent attendre). */
+  async ding(text = 'Vidéo prête') {
+    this.update(text, true);
+    if (this.mix) this.session('transient');
+    try { this.bell.currentTime = 0; await this.bell.play(); await new Promise((r) => setTimeout(r, 900)); } catch { /* pas de son */ }
+    if (this.mix && this.active) this.session('ambient');
+  }
+
   async finish(text = 'Vidéo prête') {
     this.update(text, true);
     // Musique gardée : elle baisse le temps du carillon, puis reprend son volume.

@@ -4,7 +4,7 @@ import { Report } from './sanctimaps.js';
 import { STYLES, scaled } from './planner.js';
 
 export class Director {
-  constructor(sm, data, hooks = {}) { this.sm = sm; this.data = data; this.hooks = hooks; this.stopped = false; }
+  constructor(sm, data, hooks = {}) { this.sm = sm; this.data = data; this.hooks = hooks; this.stopped = false; this.debt = 0; }
 
   async resolve(shot) {
     const p = shot.params;
@@ -60,7 +60,8 @@ export class Director {
         if (!q || q.startsWith('@')) return this.attempt('fiche', [() => sm.openNearestMarker()]);
         return this.attempt('fiche', [() => sm.openSaint(q), () => sm.searchSaint(q.split(' ')[0])]);
       }
-      case 'show_profile': return sm.showProfile(Math.max(1, shot.duration * 0.8));
+      // Lecture de la fiche : le retard pris par les scènes précédentes est rattrapé ici.
+      case 'show_profile': return sm.showProfile(Math.max(1, (shot.duration - this.debt / 1000) * 0.8));
       case 'close_profile': return sm.closeProfile();
       case 'century_filter': return this.attempt('siècle', [() => sm.century(p.century, p.country), () => sm.century(p.century)]);
       case 'calendar': return sm.feastDay(p.day);
@@ -97,6 +98,9 @@ export class Director {
     this.stopped = false;
     this.sm.style = scaled(STYLES[scenario.style] || STYLES.documentary, scenario.speed || 1);
     const reports = {};
+    // Retard accumulé (ms) : une action plus longue que prévu est rattrapée
+    // sur les attentes suivantes, pour que la vidéo garde sa durée.
+    this.debt = 0;
     for (const shot of scenario.shots) {
       if (this.stopped) break;
       this.hooks.onShot?.(shot, rehearsal);
@@ -106,8 +110,8 @@ export class Director {
       try { rep = await this.run(shot); } catch (e) { if (e?.renderFailure) throw e; rep = new Report(shot.action, false, e.message); }
       reports[shot.id] = rep;
       if (!rehearsal) {
-        const left = shot.duration * 1000 - (this.sm.clock.now() - t0);
-        if (left > 0) await this.sm.clock.wait(left);
+        const left = shot.duration * 1000 - (this.sm.clock.now() - t0) - this.debt;
+        if (left > 0) { await this.sm.clock.wait(left); this.debt = 0; } else this.debt = -left;
       }
       this.hooks.onReport?.(shot, rep, rehearsal, (this.sm.clock.now() - t0) / 1000);
     }

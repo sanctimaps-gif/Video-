@@ -314,6 +314,54 @@ export class FrameRenderer {
     await this.drawMap();
     this.mapMs += performance.now() - t0;
     await this.drawOverlay();
+    this.drawCaption();
+  }
+
+  /**
+   * Titre à l'écran de la scène en cours (nom, dates, lieu…), posé par le
+   * réalisateur. Son fondu se compte en images : une reprise après coupure
+   * redessine exactement les mêmes.
+   */
+  setCaption(caption, seconds) {
+    this.cap = caption?.title ? { ...caption, from: this.frames, to: this.frames + Math.round(seconds * this.fps) } : null;
+  }
+
+  drawCaption() {
+    const c = this.cap; if (!c) return;
+    const fade = Math.round(this.fps * 0.4);
+    const a = Math.min(1, (this.frames - c.from + 1) / fade, (c.to - this.frames) / fade);
+    if (a <= 0) return;
+    const ctx = this.ctx, W = this.width, H = this.height, u = Math.min(W, H) / 1080, wide = W > H;
+    const pad = 26 * u, maxW = W * (wide ? 0.5 : 0.84);
+    const wrap = (text, font, max, lines) => {
+      ctx.font = font; const out = []; let line = '';
+      for (const word of String(text || '').split(/\s+/).filter(Boolean)) {
+        const next = line ? `${line} ${word}` : word;
+        if (ctx.measureText(next).width > max && line) { out.push(line); line = word; } else line = next;
+        if (out.length === lines) break;
+      }
+      if (line && out.length < lines) out.push(line);
+      else if (out.length === lines && line) out[lines - 1] = out[lines - 1].replace(/\s*\S*$/, '…');
+      return out;
+    };
+    const tFont = `600 ${Math.round(48 * u)}px Georgia, "Times New Roman", serif`, sFont = `400 ${Math.round(28 * u)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    const title = wrap(c.title, tFont, maxW - 2 * pad, 2), sub = wrap(c.sub, sFont, maxW - 2 * pad, 3);
+    const tH = 56 * u, sH = 36 * u;
+    const boxH = pad * 2 + title.length * tH + (sub.length ? 8 * u + sub.length * sH : 0);
+    ctx.font = tFont; let wMax = Math.max(...title.map((l) => ctx.measureText(l).width));
+    ctx.font = sFont; if (sub.length) wMax = Math.max(wMax, ...sub.map((l) => ctx.measureText(l).width));
+    const boxW = Math.min(maxW, wMax + 2 * pad + 10 * u);
+    const x = wide ? W * 0.04 : (W - boxW) / 2, y = c.top ? H * (wide ? 0.11 : 0.08) : H - boxH - H * (wide ? 0.07 : 0.1);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(24, 18, 12, 0.74)';
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, boxW, boxH, 18 * u) : ctx.rect(x, y, boxW, boxH); ctx.fill();
+    ctx.fillStyle = '#b3263a'; ctx.fillRect(x, y + 14 * u, 6 * u, boxH - 28 * u);
+    ctx.textBaseline = 'top'; ctx.fillStyle = '#fff';
+    ctx.font = tFont; title.forEach((l, i) => ctx.fillText(l, x + pad + 10 * u, y + pad + i * tH));
+    ctx.font = sFont; ctx.fillStyle = 'rgba(255, 246, 232, 0.9)';
+    sub.forEach((l, i) => ctx.fillText(l, x + pad + 10 * u, y + pad + title.length * tH + 8 * u + i * sH));
+    ctx.restore();
   }
 
   /** Range les dernières images (et la vignette) : au pire 15 images perdues si la page est fermée. */
