@@ -32,10 +32,30 @@ export class Library {
       if (!db.objectStoreNames.contains('frames')) db.createObjectStore('frames', { keyPath: ['job', 'i'] });
     };
     this.db = await request(req);
+    // Base fermée par le système (page en arrière-plan sur iPhone) : on rouvrira au prochain accès.
+    this.db.onclose = () => { this.db = null; };
+    this.db.onversionchange = () => { try { this.db?.close(); } catch { /* déjà fermée */ } this.db = null; };
     return this.db;
   }
 
+  /**
+   * Une transaction, avec reconnexion : iOS coupe parfois la base d'une page
+   * restée en arrière-plan (« Connection to Indexed Database server lost »).
+   * On se reconnecte et on refait l'opération (toutes sont rejouables).
+   */
   async tx(mode, fn, stores = STORE) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await this.run(mode, fn, stores); } catch (e) {
+        const lost = /connection|closing|closed|lost|invalidstate|unknownerror|abort/i.test(`${e?.name} ${e?.message}`);
+        if (!lost || attempt >= 3) throw e;
+        try { this.db?.close(); } catch { /* déjà fermée */ }
+        this.db = null;
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      }
+    }
+  }
+
+  async run(mode, fn, stores) {
     const db = await this.open();
     const tx = db.transaction(stores, mode);
     const result = await fn(Array.isArray(stores) ? stores.map((n) => tx.objectStore(n)) : tx.objectStore(stores));

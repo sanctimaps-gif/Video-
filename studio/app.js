@@ -511,7 +511,7 @@ async function runQueue() {
   let wakeLock = null;
   try {
     await stageReady;
-    const tries = new Map();
+    const tries = new Map(), marks = new Map();
     for (;;) {
       const all = await library.jobs().catch(() => []);
       // Les vidéos terminées sont seulement nettoyées, jamais refaites.
@@ -520,9 +520,12 @@ async function runQueue() {
       // Une tâche interrompue passe avant celles qui attendent.
       const next = jobs.find((j) => j.status !== 'queued') || jobs[0];
       if (!next) break;
-      // Garde-fou : une même vidéo n'est jamais relancée plus de deux fois de suite.
-      tries.set(next.id, (tries.get(next.id) || 0) + 1);
-      if (tries.get(next.id) > 2) {
+      // Garde-fou : une vidéo qui n'avance plus du tout (même étape, même image)
+      // après trois essais d'affilée s'arrête ; tant qu'elle avance, elle continue.
+      const mark = `${next.status}:${next.framesDone}`;
+      tries.set(next.id, marks.get(next.id) === mark ? (tries.get(next.id) || 0) + 1 : 1);
+      marks.set(next.id, mark);
+      if (tries.get(next.id) > 3) {
         next.failed = 'arrêtée après plusieurs essais (rien ne sera refait sans votre accord)';
         await library.saveJob(next).catch(() => {});
         log(`« ${next.title} » : arrêtée après plusieurs essais.`);
@@ -558,7 +561,16 @@ async function processJob(job) {
         const fresh = (await library.jobs().catch(() => [])).find((j) => j.id === job.id);
         // Déjà terminée (l'incident a eu lieu après le rangement) : on ne recommence surtout pas.
         if (!fresh || fresh.status === 'done') { saved = 'noplan'; break; }
-        if (!fresh || e.fatal || attempt >= 40 || (fresh.framesDone <= before && attempt >= 3)) throw e;
+        // Page en arrière-plan : le téléphone a coupé quelque chose (base, décodage) ;
+        // on attend le retour dans Safari, puis on reprend sans rien demander.
+        if (!e.fatal && document.hidden) {
+          log('Le téléphone a interrompu le rendu en arrière-plan : il reprendra tout seul au retour dans Safari.');
+          keepAlive.update('reprise au retour dans Safari', true);
+          await untilVisible();
+          job = fresh; attempt = 0;
+          continue;
+        }
+        if (e.fatal || attempt >= 40 || (fresh.framesDone <= before && attempt >= 3)) throw e;
         job = fresh;
         log(`Reprise automatique à ${(job.framesDone / 30).toFixed(1)} s.`);
         await new Promise((r) => setTimeout(r, 800));
@@ -576,7 +588,7 @@ async function processJob(job) {
     } else {
       log(`Échec : ${e.message}`);
       job = (await library.jobs().catch(() => [])).find((j) => j.id === job.id) || job;
-      job.failed = e.message;
+      job.failed = e.message; job.failedFatal = !!e.fatal;
       await library.saveJob(job).catch(() => {});
       keepAlive.update('échec du rendu', true);
     }
@@ -717,13 +729,13 @@ async function renderTasks() {
     const live = progress.get(job.id);
     const pct = live?.pct ?? (job.expected ? Math.min(100, (job.framesDone / 30 / job.expected) * 100) : 0);
     li.querySelector('.task-state').textContent = job.failed ? `Interrompue : ${job.failed}`
-      : `${STATUS[live?.status || job.status] || job.status}${(live?.status || job.status) !== 'queued' && pct ? ` — ${Math.floor(pct)} %` : ''}${!queueRunning && job.status !== 'queued' ? ' (en pause)' : ''}`;
+      : `${STATUS[live?.status || job.status] || job.status}${(live?.status || job.status) !== 'queued' && pct ? ` — ${Math.floor(pct)} %` : ''}${queueRunning && !live && job.status !== 'queued' ? ' — reprise automatique dès que la carte est chargée…' : ''}`;
     li.querySelector('.task-bar span').style.width = `${pct}%`;
     const actions = li.querySelector('.task-actions');
     const btn = (label, fn, cls = '') => { const b = document.createElement('button'); b.className = `mini ${cls}`; b.textContent = label; b.addEventListener('click', fn); actions.append(b); };
     if (job.failed) {
       btn('Reprendre', async () => { if (!keepAlive.active) keepAlive.start(`SanctiMaps — ${job.title.slice(0, 40)}`); delete job.failed; job.stuck = 0; await library.saveJob(job); renderTasks(); runQueue(); }, 'primary');
-    } else if (!queueRunning) {
+    } else if (!queueRunning && !rendering) {
       btn('Lancer', () => { if (!keepAlive.active) keepAlive.start(`SanctiMaps — ${job.title.slice(0, 40)}`); runQueue(); }, 'primary');
     }
     btn(rendering && progress.has(job.id) ? 'Annuler' : 'Retirer', async () => {
@@ -743,28 +755,38 @@ async function renderTasks() {
  */
 let resumedAutomatically = false;
 async function autoResume() {
-  for (const j of (await library.jobs().catch(() => [])).filter((x) => x.status === 'done')) await library.dropJob(j.id).catch(() => {});
-  const jobs = (await library.jobs().catch(() => [])).filter((j) => !j.failed && j.status !== 'done');
-  await renderTasks();
-  if (!jobs.length) return;
-  const job = jobs.find((j) => j.status !== 'queued');
-  if (job) {
-    const progressed = job.reloadFrames === undefined || job.framesDone > job.reloadFrames;
+  let all = await library.jobs().catch(() => []);
+  for (const j of all.filter((x) => x.status === 'done')) await library.dropJob(j.id).catch(() => {});
+  all = all.filter((j) => j.status !== 'done');
+  const RANK = { queued: 0, preparing: 1, rendering: 2, encoding: 3 };
+  for (const job of all) {
+    if (job.status === 'queued') continue;
+    // A-t-elle avancé depuis la dernière ouverture du site ? (étape ou images)
+    const key = (RANK[job.status] || 0) * 1e7 + (job.framesDone || 0);
+    const progressed = job.reloadKey === undefined || key > job.reloadKey;
     job.stuck = progressed ? 0 : (job.stuck || 0) + 1;
-    job.reloadFrames = job.framesDone;
+    job.reloadKey = key;
+    // Une interruption ordinaire (page fermée, téléphone en veille) se reprend
+    // toute seule ; seule une vidéo bloquée au même endroit plusieurs fois de
+    // suite, ou une erreur sans remède (plus de place), attend votre décision.
+    if (job.failed && !job.failedFatal && job.stuck < 4) { delete job.failed; }
     await library.saveJob(job).catch(() => {});
-    if (job.stuck >= 2) {
-      const pct = Math.min(100, Math.round((job.framesDone / 30 / (job.expected || 1)) * 100));
-      ui.resumeText.textContent = `« ${job.title} » s'est arrêté plusieurs fois au même endroit (${pct} %). Les images déjà faites sont gardées.`;
-      ui.resume.hidden = false; ui.resume.dataset.id = job.id;
-      return;
-    }
   }
+  const jobs = all.filter((j) => !j.failed && (j.stuck || 0) < 4);
+  const blocked = all.find((j) => !j.failed && (j.stuck || 0) >= 4);
+  if (blocked) {
+    blocked.failed = 'arrêtée au même endroit plusieurs fois de suite';
+    await library.saveJob(blocked).catch(() => {});
+  }
+  if (!jobs.length) { await renderTasks(); return; }
   resumedAutomatically = true;
-  toast(`${job ? "La vidéo en cours a repris toute seule." : `${jobs.length} vidéo${jobs.length > 1 ? 's' : ''} en attente : la fabrication reprend.`} Touchez l'écran une fois : elle pourra alors continuer si vous quittez Safari.`, [], 0, 'resume');
+  // La reprise démarre d'abord, l'affichage suit : jamais de « Lancer » à presser.
+  runQueue();
+  await renderTasks();
+  const job = jobs.find((j) => j.status !== 'queued');
+  toast(`${job ? 'La vidéo en cours reprend toute seule.' : `${jobs.length} vidéo${jobs.length > 1 ? 's' : ''} en attente : la fabrication reprend toute seule.`} Touchez l'écran une fois : elle pourra alors continuer si vous quittez Safari.`, [], 0, 'resume');
   // Le son qui garde la page éveillée en arrière-plan ne peut partir que d'un toucher.
   document.addEventListener('pointerdown', () => { if (rendering || queueRunning) keepAlive.start(`SanctiMaps — ${(job || jobs[0]).title.slice(0, 40)}`); toast('', [], 0, 'resume'); }, { once: true, capture: true });
-  runQueue();
 }
 
 /**
@@ -830,6 +852,16 @@ for (const [target, type, text] of [[window, 'pagehide', 'Safari quitte la page'
   [document, 'freeze', 'Safari gèle la page'], [document, 'resume', 'Safari dégèle la page']]) {
   target.addEventListener(type, () => { if (rendering) log(`${text} (${ui.progressText.textContent || 'préparation'}).`); });
 }
+
+// Retour sur le site (onglet réaffiché, page restaurée) : s'il reste des
+// vidéos à faire et que rien ne tourne, la fabrication repart d'elle-même.
+async function resumeIfWaiting() {
+  if (document.hidden || queueRunning || rendering) return;
+  const waiting = (await library.jobs().catch(() => [])).filter((j) => !j.failed && j.status !== 'done');
+  if (waiting.length) { log('Retour sur le site : la fabrication des vidéos reprend.'); runQueue(); renderTasks(); }
+}
+document.addEventListener('visibilitychange', resumeIfWaiting);
+window.addEventListener('pageshow', (e) => { if (e.persisted) resumeIfWaiting(); });
 
 // En arrière-plan, le journal dit où en est le rendu à chaque aller-retour.
 document.addEventListener('visibilitychange', () => {
