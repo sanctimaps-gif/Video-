@@ -551,7 +551,7 @@ async function processJob(job) {
   renderTasks();
   if (!keepAlive.active) keepAlive.title = `SanctiMaps — ${job.title.slice(0, 40)}`;
   try {
-    let saved = null;
+    let saved = null, stalled = 0;
     for (let attempt = 1; ; attempt++) {
       const before = job.framesDone;
       try { saved = await renderJob(job); break; } catch (e) {
@@ -567,13 +567,15 @@ async function processJob(job) {
           log('Le téléphone a interrompu le rendu en arrière-plan : il reprendra tout seul au retour dans Safari.');
           keepAlive.update('reprise au retour dans Safari', true);
           await untilVisible();
-          job = fresh; attempt = 0;
+          job = fresh; attempt = 0; stalled = 0;
           continue;
         }
-        if (e.fatal || attempt >= 40 || (fresh.framesDone <= before && attempt >= 3)) throw e;
+        // Tant qu'elle avance, on continue ; sinon, quelques essais de plus en plus espacés.
+        stalled = fresh.framesDone > before ? 0 : stalled + 1;
+        if (e.fatal || attempt >= 60 || stalled >= 6) throw e;
         job = fresh;
         log(`Reprise automatique à ${(job.framesDone / 30).toFixed(1)} s.`);
-        await new Promise((r) => setTimeout(r, 800));
+        await new Promise((r) => setTimeout(r, 800 * 2 ** Math.max(0, stalled - 1)));
       }
     }
     if (saved === 'noplan') return;
@@ -857,7 +859,15 @@ for (const [target, type, text] of [[window, 'pagehide', 'Safari quitte la page'
 // vidéos à faire et que rien ne tourne, la fabrication repart d'elle-même.
 async function resumeIfWaiting() {
   if (document.hidden || queueRunning || rendering) return;
-  const waiting = (await library.jobs().catch(() => [])).filter((j) => !j.failed && j.status !== 'done');
+  const jobs = (await library.jobs().catch(() => [])).filter((j) => j.status !== 'done');
+  // Une vidéo interrompue par un incident ordinaire repart aussi (trois fois au plus sans avancer).
+  for (const j of jobs) {
+    if (!j.failed || j.failedFatal) continue;
+    if (j.retryKey !== j.framesDone) { j.retryKey = j.framesDone; j.retries = 0; }
+    j.retries = (j.retries || 0) + 1;
+    if (j.retries <= 3) { delete j.failed; await library.saveJob(j).catch(() => {}); }
+  }
+  const waiting = jobs.filter((j) => !j.failed);
   if (waiting.length) { log('Retour sur le site : la fabrication des vidéos reprend.'); runQueue(); renderTasks(); }
 }
 document.addEventListener('visibilitychange', resumeIfWaiting);
