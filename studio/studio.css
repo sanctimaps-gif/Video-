@@ -184,3 +184,16 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .stage .cursor.down svg { transform: scale(.92); }
 @keyframes cur-press { 0%, 40% { transform: scale(.86); } 100% { transform: scale(1); } }
 @keyframes cur-ring { 0% { opacity: 1; transform: scale(.25); background: rgba(179,38,58,.35); box-shadow: 0 0 0 2px rgba(255,255,255,.8); } 100% { opacity: 0; transform: scale(1); background: rgba(179,38,58,0); box-shadow: 0 0 0 2px rgba(255,255,255,0); } }
+
+/* Le prompteur de la voix off : le texte de la scène en cours, en grand. */
+.prompter { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px;
+  background: rgba(10, 8, 6, 0.82); }
+.prompter[hidden] { display: none; }
+.prompter-box { width: min(640px, 100%); max-height: 100%; overflow-y: auto; display: grid; gap: 10px;
+  padding: 20px; border-radius: 18px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); }
+.prompter-box h2 { margin: 0; }
+.prompter-time, .prompter-scene, .prompter-next { margin: 0; font-size: 0.9rem; opacity: 0.75; }
+.prompter-text { margin: 0; min-height: 5.5em; font-family: Georgia, "Times New Roman", serif; font-size: 1.6rem; line-height: 1.35; }
+.prompter-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.prompter-bar span { display: block; height: 100%; width: 0; background: #b3263a; transition: width 100ms linear; }
+.prompter audio { width: 100%; }

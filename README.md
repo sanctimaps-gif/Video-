@@ -36,6 +36,20 @@ français, ajout, suppression) ; **🤖 Génération automatique** génère puis
 C'est un moteur de règles de réalisation qui tourne sur l'appareil, sans serveur ni modèle de
 langage : il n'invente ni commande, ni lieu, ni fait.
 
+**Le son.** La case **Musique d'ambiance** ajoute au MP4 une musique douce composée sur l'appareil
+(accords tenus, notes de cloche, écho ; `studio/son.js`), à la durée exacte de la vidéo, avec entrée et
+sortie en fondu : rien n'est téléchargé, aucun droit d'auteur. **🎙️ Enregistrer la voix off** ouvre un
+prompteur : le texte de chaque scène s'affiche au moment exact où elle commence dans la vidéo, pendant
+que le micro enregistre ; la voix est gardée pour ce storyboard et ajoutée au MP4 à l'export, la musique
+baissant quand on parle. Le son est encodé en AAC (Opus si le navigateur n'a pas d'AAC) ; un navigateur
+sans AudioEncoder donne une vidéo muette, et le journal le dit. Le réalisateur coche la musique et
+rappelle la voix off quand la demande en parle.
+
+**Messages et démonstration.** « Affiche le message : « Découvrez SanctiMaps » » met ce texte à l'écran
+(à la fin s'il est demandé en fin de vidéo, sinon après l'introduction), même titres décochés.
+« Montre les fonctionnalités du site » devient une démonstration avec les vraies commandes : recherche,
+saint du jour, apparitions, jeux.
+
 **Souris à l'écran** (case cochée par défaut) : avant chaque geste — toucher un pays, un bouton,
 une fiche, un réglage, zoomer, faire glisser la carte — une flèche de souris va jusqu'à la cible
 d'un mouvement naturel (départ et arrêt en douceur, léger arc), puis clique avec une onde ; elle

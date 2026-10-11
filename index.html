@@ -61,6 +61,7 @@
       </div>
       <label class="check"><input type="checkbox" id="captions" checked> Titres à l'écran (nom, dates, lieux — tirés de SanctiMaps)</label>
       <label class="check"><input type="checkbox" id="cursor" checked> Souris à l'écran (elle se déplace et clique comme une personne)</label>
+      <label class="check"><input type="checkbox" id="music"> Musique d'ambiance (composée par le studio, ajoutée à la vidéo)</label>
       <div class="row">
         <button id="plan" class="primary">✨ Générer avec l'IA</button>
         <button id="auto" title="Génère le storyboard puis lance la vidéo en arrière-plan">🤖 Génération automatique</button>
@@ -79,6 +80,10 @@
         <button id="improve">✨ Améliorer</button>
         <button id="play">▶ Prévisualiser</button>
       </div>
+      <div class="row">
+        <button id="voice" title="Le texte de chaque scène défile à son moment pendant que vous lisez">🎙️ Enregistrer la voix off</button>
+      </div>
+      <p class="hint" id="voice-state" hidden></p>
       <div class="row">
         <button id="shoot" class="primary">🎬 Exporter la vidéo (MP4)</button>
       </div>
@@ -237,5 +242,23 @@
   "./studio/realisateur.js": "./studio/realisateur.js?v=20261008i"
 }}</script>
 <script type="module" src="studio/app.js?v=20261008i"></script>
+  <div class="prompter" id="prompter" hidden role="dialog" aria-modal="true" aria-labelledby="prompter-title">
+    <div class="prompter-box">
+      <h2 id="prompter-title">🎙️ Voix off</h2>
+      <p class="prompter-time" id="prompter-time"></p>
+      <p class="prompter-scene" id="prompter-scene"></p>
+      <p class="prompter-text" id="prompter-text"></p>
+      <p class="prompter-next" id="prompter-next"></p>
+      <div class="prompter-bar"><span id="prompter-fill"></span></div>
+      <audio id="prompter-audio" controls hidden></audio>
+      <div class="row">
+        <button id="prompter-go" class="primary">● Commencer</button>
+        <button id="prompter-keep" hidden>✓ Garder cette voix</button>
+        <button id="prompter-again" hidden>↺ Recommencer</button>
+        <button id="prompter-close">Fermer</button>
+      </div>
+      <p class="hint">Lisez le texte affiché : il change au moment exact où la scène change dans la vidéo. Le micro s'arrête tout seul à la fin.</p>
+    </div>
+  </div>
 </body>
 </html>
