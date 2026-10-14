@@ -18,7 +18,7 @@ const ui = {
   stop: $('#stop'), timeline: $('#timeline'), notes: $('#notes'), log: $('#log'), wrap: $('#stage-wrap'), stage: $('#stage'),
   overlay: $('#overlay'), state: $('#state'), memory: $('#memory'), result: $('#result'), cmd: $('#cmd'), cmdGo: $('#cmd-go'),
   recHint: $('#rec-hint'), total: $('#total'), capture: $('#capture'), progress: $('#progress'),
-  progressFill: $('#progress-fill'), progressText: $('#progress-text'), cmdResult: $('#cmd-result'),
+  progressFill: $('#progress-fill'), progressPause: $('#progress-pause'), progressText: $('#progress-text'), cmdResult: $('#cmd-result'),
   toast: $('#toast'), resume: $('#resume'), resumeText: $('#resume-text'), resumeLog: $('#resume-log'), resumeGo: $('#resume-go'), resumeDrop: $('#resume-drop'),
   auto: $('#auto'), steps: $('#steps'), versions: $('#versions'), reasoning: $('#reasoning'), checks: $('#checks'), captions: $('#captions'), cursor: $('#cursor'),
   board: $('#board'), edit: $('#edit'), improve: $('#improve'), addScene: $('#add-scene'), caption: $('#caption'), tasks: $('#tasks'), taskList: $('#task-list'),
@@ -119,7 +119,7 @@ async function loadStage(aspect = ui.aspect.value, styleName = ui.style.value) {
   sm.cursor.visible = false; sm.onCursor?.(sm.cursor);
   director = new Director(sm, data, {
     onShot: (shot, rehearsal) => {
-      if (cancelId && rendering) throw Object.assign(new Error('vidéo annulée'), { renderFailure: true, fatal: true, cancelled: true });
+      if (rendering) stopCheck(null, true);
       if (playingScn === scenario) markShot(shot.id, rehearsal ? 'répétition' : 'en cours');
       if (!rehearsal) showCaption(shot);
     },
@@ -476,7 +476,17 @@ function untilVisible() {
 
 const STATUS = { queued: 'En attente', preparing: 'Préparation des scènes', rendering: 'Génération', encoding: 'Assemblage de la vidéo', finalizing: 'Finalisation' };
 const progress = new Map(); // id → { pct, label } en direct
-let cancelId = null, queueRunning = false;
+let cancelId = null, pauseId = null, queueRunning = false;
+/** Annulation ou pause demandée pour la vidéo en cours : on l'arrête à la prochaine image. */
+function stopCheck(id, renderFailure) {
+  if (cancelId && (!id || cancelId === id)) throw Object.assign(new Error('vidéo annulée'), { renderFailure, fatal: true, cancelled: true });
+  if (pauseId && (!id || pauseId === id)) throw Object.assign(new Error('vidéo en pause'), { renderFailure, fatal: true, paused: true });
+}
+function pauseCurrent() {
+  const id = [...progress.keys()][0];
+  if (!rendering || !id) return;
+  pauseId = id; toast('Mise en pause…', [], 2500);
+}
 
 function newJob(scn, title) {
   return { id: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`, created: Date.now(), updated: Date.now(),
@@ -516,7 +526,7 @@ async function runQueue() {
       const all = await library.jobs().catch(() => []);
       // Les vidéos terminées sont seulement nettoyées, jamais refaites.
       for (const j of all.filter((x) => x.status === 'done')) await library.dropJob(j.id).catch(() => {});
-      const jobs = all.filter((j) => !j.failed && j.status !== 'done').sort((x, y) => x.created - y.created);
+      const jobs = all.filter((j) => !j.failed && !j.paused && j.status !== 'done').sort((x, y) => x.created - y.created);
       // Une tâche interrompue passe avant celles qui attendent.
       const next = jobs.find((j) => j.status !== 'queued') || jobs[0];
       if (!next) break;
@@ -548,6 +558,7 @@ async function runQueue() {
 async function processJob(job) {
   rendering = true; refresh(); ui.resume.hidden = true;
   progress.set(job.id, { status: job.status, pct: null });
+  heartbeat(job.id);
   renderTasks();
   if (!keepAlive.active) keepAlive.title = `SanctiMaps — ${job.title.slice(0, 40)}`;
   try {
@@ -556,7 +567,7 @@ async function processJob(job) {
       const before = job.framesDone;
       try { saved = await renderJob(job); break; } catch (e) {
         activeRenderer?.abort(); activeRenderer = null; clock.endRender();
-        if (e.cancelled) throw e;
+        if (e.cancelled || e.paused) throw e;
         log(`Incident : ${e.message}`);
         const fresh = (await library.jobs().catch(() => [])).find((j) => j.id === job.id);
         // Déjà terminée (l'incident a eu lieu après le rangement) : on ne recommence surtout pas.
@@ -587,6 +598,10 @@ async function processJob(job) {
     if (e.cancelled) {
       await library.dropJob(job.id).catch(() => {});
       log(`Vidéo annulée : « ${job.title} ».`);
+    } else if (e.paused) {
+      job = (await library.jobs().catch(() => [])).find((j) => j.id === job.id) || job;
+      job.paused = 'mise en pause'; await library.saveJob(job).catch(() => {});
+      log(`Vidéo en pause : « ${job.title} ». Elle ne reprendra que si vous appuyez sur « Reprendre ».`);
     } else {
       log(`Échec : ${e.message}`);
       job = (await library.jobs().catch(() => [])).find((j) => j.id === job.id) || job;
@@ -595,7 +610,7 @@ async function processJob(job) {
       keepAlive.update('échec du rendu', true);
     }
   } finally {
-    clock.endRender(); activeRenderer = null; cancelId = null; playingScn = null;
+    clock.endRender(); activeRenderer = null; cancelId = null; pauseId = null; playingScn = null; heartbeat(null);
     rendering = false; progress.delete(job.id);
     overlay(''); ui.progress.hidden = true; ui.caption.hidden = true;
     refresh(); renderTasks();
@@ -647,14 +662,15 @@ async function renderJob(job) {
     await renderer.start();
     renderer.cursorOf = () => (sm.useCursor ? { ...sm.cursor, now: clock.now() } : null);
     ui.progress.hidden = false;
-    let lastBeat = Date.now(), lastUi = 0;
+    let lastBeat = Date.now(), lastUi = 0, lastHeart = 0;
     const onFrame = () => {
-      if (cancelId === job.id) throw Object.assign(new Error('vidéo annulée'), { renderFailure: true, fatal: true, cancelled: true });
+      stopCheck(job.id, true);
       const now = Date.now();
       // Page suspendue par le téléphone ? On le dit au retour : le rendu, lui, repart.
       if (now - lastBeat > 20000) log(`Rendu en pause ${Math.round((now - lastBeat) / 1000)} s (page suspendue par le téléphone) : il reprend là où il était.`);
       lastBeat = now;
       if (now - lastUi < 250) return;
+      if (now - lastHeart > 3000) { lastHeart = now; heartbeat(job.id); }
       lastUi = now;
       const t = renderer.frames / 30;
       const pct = Math.min(100, (t / expected) * 100);
@@ -699,7 +715,7 @@ async function assemble(job) {
     try {
       const t0 = performance.now();
       const out = await encodeJob(library, job, (i, n) => {
-        if (cancelId === job.id) throw Object.assign(new Error('vidéo annulée'), { fatal: true, cancelled: true });
+        stopCheck(job.id, false);
         const pct = Math.round((i / n) * 100);
         ui.progressFill.style.width = `${pct}%`;
         ui.progressText.textContent = `Assemblage du MP4 ${pct} %`;
@@ -730,13 +746,15 @@ async function renderTasks() {
     li.querySelector('.task-title').textContent = `${job.title} · ${Math.round(job.expected || 0)} s · ${job.aspect}`;
     const live = progress.get(job.id);
     const pct = live?.pct ?? (job.expected ? Math.min(100, (job.framesDone / 30 / job.expected) * 100) : 0);
-    li.querySelector('.task-state').textContent = job.failed ? `Interrompue : ${job.failed}`
+    li.querySelector('.task-state').textContent = job.paused ? `En pause : ${job.paused}` : job.failed ? `Interrompue : ${job.failed}`
       : `${STATUS[live?.status || job.status] || job.status}${(live?.status || job.status) !== 'queued' && pct ? ` — ${Math.floor(pct)} %` : ''}${queueRunning && !live && job.status !== 'queued' ? ' — reprise automatique dès que la carte est chargée…' : ''}`;
     li.querySelector('.task-bar span').style.width = `${pct}%`;
     const actions = li.querySelector('.task-actions');
     const btn = (label, fn, cls = '') => { const b = document.createElement('button'); b.className = `mini ${cls}`; b.textContent = label; b.addEventListener('click', fn); actions.append(b); };
-    if (job.failed) {
-      btn('Reprendre', async () => { if (!keepAlive.active) keepAlive.start(`SanctiMaps — ${job.title.slice(0, 40)}`); delete job.failed; job.stuck = 0; await library.saveJob(job); renderTasks(); runQueue(); }, 'primary');
+    if (job.failed || job.paused) {
+      btn('▶ Reprendre', async () => { if (!keepAlive.active) keepAlive.start(`SanctiMaps — ${job.title.slice(0, 40)}`); delete job.failed; delete job.paused; job.stuck = 0; job.crashes = 0; await library.saveJob(job); renderTasks(); runQueue(); }, 'primary');
+    } else if (rendering && progress.has(job.id)) {
+      btn('⏸ Pause', pauseCurrent);
     } else if (!queueRunning && !rendering) {
       btn('Lancer', () => { if (!keepAlive.active) keepAlive.start(`SanctiMaps — ${job.title.slice(0, 40)}`); runQueue(); }, 'primary');
     }
@@ -756,10 +774,44 @@ async function renderTasks() {
  * qu'on décide (fenêtre « Rendu interrompu »).
  */
 let resumedAutomatically = false;
+
+// Battement de cœur de la vidéo en cours, gardé sur l'appareil : au
+// démarrage suivant, il dit si la page a été fermée proprement, tuée en
+// arrière-plan, ou rechargée de force pendant qu'on la regardait (plantage).
+const BEAT = 'sanctimaps-studio.battement';
+const previousBeat = (() => { try { return JSON.parse(localStorage.getItem(BEAT) || 'null'); } catch { return null; } })();
+function heartbeat(id, extra = {}) {
+  try {
+    if (!id) localStorage.removeItem(BEAT);
+    else localStorage.setItem(BEAT, JSON.stringify({ id, at: Date.now(), hidden: document.hidden, ...extra }));
+  } catch { /* sans stockage */ }
+}
+window.addEventListener('pagehide', () => { const id = rendering && [...progress.keys()][0]; if (id) heartbeat(id, { clean: true }); });
+document.addEventListener('visibilitychange', () => { const id = rendering && [...progress.keys()][0]; if (id) heartbeat(id); });
+
 async function autoResume() {
   let all = await library.jobs().catch(() => []);
   for (const j of all.filter((x) => x.status === 'done')) await library.dropJob(j.id).catch(() => {});
   all = all.filter((j) => j.status !== 'done');
+  // La page a été rechargée de force pendant qu'on regardait la fabrication
+  // (sans fermeture propre, écran allumé) : le téléphone a sans doute manqué
+  // de mémoire. Deux fois de suite sans avancer, la vidéo se met en pause :
+  // l'application s'ouvre normalement au lieu de recommencer en boucle.
+  const crashed = previousBeat && !previousBeat.clean && !previousBeat.hidden && Date.now() - previousBeat.at < 10 * 60e3
+    && all.find((j) => j.id === previousBeat.id);
+  heartbeat(null);
+  if (crashed) {
+    const j = crashed;
+    j.crashes = (j.crashFrames != null && j.framesDone < j.crashFrames + 90) ? (j.crashes || 0) + 1 : 1;
+    j.crashFrames = j.framesDone;
+    log(`Au dernier passage, la page a été rechargée pendant la fabrication de « ${j.title} » (${j.crashes}).`);
+    if (j.crashes >= 2) {
+      j.paused = 'le téléphone a rechargé la page plusieurs fois pendant la fabrication (mémoire insuffisante ?)';
+      log(`« ${j.title} » mise en pause pour que l'application reste utilisable. Fermez d'autres onglets ou applications, puis « Reprendre ».`);
+    }
+    await library.saveJob(j).catch(() => {});
+  }
+  all = all.filter((j) => !j.paused);
   const RANK = { queued: 0, preparing: 1, rendering: 2, encoding: 3 };
   for (const job of all) {
     if (job.status === 'queued') continue;
@@ -782,8 +834,9 @@ async function autoResume() {
   }
   if (!jobs.length) { await renderTasks(); return; }
   resumedAutomatically = true;
-  // La reprise démarre d'abord, l'affichage suit : jamais de « Lancer » à presser.
-  runQueue();
+  // La reprise démarre toute seule (jamais de « Lancer » à presser), un
+  // instant après l'ouverture : l'application s'affiche d'abord.
+  setTimeout(runQueue, 2500);
   await renderTasks();
   const job = jobs.find((j) => j.status !== 'queued');
   toast(`${job ? 'La vidéo en cours reprend toute seule.' : `${jobs.length} vidéo${jobs.length > 1 ? 's' : ''} en attente : la fabrication reprend toute seule.`} Touchez l'écran une fois : elle pourra alors continuer si vous quittez Safari.`, [], 0, 'resume');
@@ -833,6 +886,7 @@ async function saveToDevice(id) {
   else { const a = document.createElement('a'); a.href = URL.createObjectURL(full.blob); a.download = fileName(full); a.click(); }
 }
 
+ui.progressPause.addEventListener('click', pauseCurrent);
 ui.resumeGo.addEventListener('click', async () => {
   // Le son qui garde la page éveillée doit partir dans ce toucher.
   keepAlive.start('SanctiMaps — reprise du rendu');
@@ -862,12 +916,12 @@ async function resumeIfWaiting() {
   const jobs = (await library.jobs().catch(() => [])).filter((j) => j.status !== 'done');
   // Une vidéo interrompue par un incident ordinaire repart aussi (trois fois au plus sans avancer).
   for (const j of jobs) {
-    if (!j.failed || j.failedFatal) continue;
+    if (!j.failed || j.failedFatal || j.paused) continue;
     if (j.retryKey !== j.framesDone) { j.retryKey = j.framesDone; j.retries = 0; }
     j.retries = (j.retries || 0) + 1;
     if (j.retries <= 3) { delete j.failed; await library.saveJob(j).catch(() => {}); }
   }
-  const waiting = jobs.filter((j) => !j.failed);
+  const waiting = jobs.filter((j) => !j.failed && !j.paused);
   if (waiting.length) { log('Retour sur le site : la fabrication des vidéos reprend.'); runQueue(); renderTasks(); }
 }
 document.addEventListener('visibilitychange', resumeIfWaiting);
