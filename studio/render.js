@@ -11,6 +11,7 @@
 // assemblé à la fin à partir de ces images, par ``encodeJob``.
 import { createContext, destroyContext, domToCanvas } from './vendor/modern-screenshot.mjs';
 import { ArrayBufferTarget, Muxer } from './vendor/mp4-muxer.mjs';
+import { audioConfig, encodeAudio, soundtrack } from './son.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK = 'http://www.w3.org/1999/xlink';
@@ -441,7 +442,19 @@ export async function encodeJob(library, job, onProgress = () => {}) {
   const { width, height, fps } = job; const n = job.frames;
   const picked = await pickCodec(width, height, fps);
   if (!picked) throw new Error("ce navigateur ne sait pas encoder de vidéo");
-  const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: picked.mux, width, height, frameRate: fps }, fastStart: 'in-memory' });
+  // Le son (musique composée, voix off) : calculé à la durée exacte des images.
+  let sound = null, aconf = null, soundNote = '';
+  if (job.music || job.voice) {
+    aconf = await audioConfig();
+    if (!aconf) soundNote = 'ce navigateur ne sait pas encoder le son : vidéo muette';
+    else {
+      try { sound = await soundtrack(n / fps, { music: !!job.music, voiceBlob: job.voice || null, sampleRate: aconf.sampleRate }); }
+      catch (e) { soundNote = `son non calculé (${e.message}) : vidéo muette`; sound = null; }
+    }
+  }
+  const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: picked.mux, width, height, frameRate: fps },
+    ...(sound ? { audio: { codec: aconf.mux, numberOfChannels: 2, sampleRate: aconf.sampleRate } } : {}),
+    fastStart: 'in-memory' });
   let failure = null;
   const encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { failure = e; } });
   encoder.configure(picked.config);
@@ -466,11 +479,15 @@ export async function encodeJob(library, job, onProgress = () => {}) {
     }
     await encoder.flush();
     if (failure) throw failure;
+    if (sound) {
+      try { await encodeAudio(muxer, sound, aconf); } catch (e) { soundNote = `son non encodé (${e.message})`; }
+    }
     muxer.finalize();
   } finally {
     last?.close();
     try { encoder.close(); } catch { /* déjà fermé */ }
   }
   onProgress(n, n);
-  return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: n / fps, codec: picked.mux };
+  return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: n / fps, codec: picked.mux,
+    sound: sound ? [job.music && 'musique', job.voice && 'voix off'].filter(Boolean).join(' + ') : '', soundNote };
 }

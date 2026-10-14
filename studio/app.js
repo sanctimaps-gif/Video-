@@ -24,6 +24,7 @@ const ui = {
   board: $('#board'), edit: $('#edit'), improve: $('#improve'), addScene: $('#add-scene'), caption: $('#caption'), tasks: $('#tasks'), taskList: $('#task-list'),
   addPause: $('#add-pause'), clear: $('#clear'), library: $('#library'), libList: $('#library-list'), libUsage: $('#library-usage'),
   demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
+  music: $('#music'), voice: $('#voice'), voiceState: $('#voice-state'),
 };
 
 const clock = new Clock();
@@ -37,6 +38,8 @@ $('#keep-music').addEventListener('change', (e) => {
   try { localStorage.setItem(MUSIC, e.target.checked ? 'oui' : 'non'); } catch { /* sans stockage */ }
 });
 const library = new Library();
+// La voix off enregistrée pour le storyboard en cours : { blob, seconds, signature }.
+let voiceTake = null;
 const data = new SiteData(SRC);
 const dataReady = data.load();
 dataReady.catch(() => {});
@@ -155,6 +158,7 @@ function restore() {
  * remplacement de l'action, suppression.
  */
 function renderTimeline() {
+  if (voiceTake) refreshVoiceState();
   ui.timeline.replaceChildren();
   if (!scenario) { ui.total.textContent = ''; ui.notes.textContent = ''; save(); refresh(); return; }
   let t = 0;
@@ -175,7 +179,7 @@ function renderTimeline() {
     li.querySelector('.scene-head').textContent = `SCÈNE ${i + 1} — ${s.duration.toFixed(1).replace('.0', '')} s${s.purpose ? ' · ' + s.purpose : ''}`;
     li.querySelector('.lbl').textContent = `${EMOJI[s.action] || '•'} ${s.label}`;
     const capEl = li.querySelector('.scene-cap');
-    if (s.caption?.title && scenario.captions !== false) capEl.textContent = `« ${s.caption.title}${s.caption.sub ? ' — ' + s.caption.sub : ''} »`; else capEl.remove();
+    if (s.caption?.title && (scenario.captions !== false || s.caption.force)) capEl.textContent = `« ${s.caption.title}${s.caption.sub ? ' — ' + s.caption.sub : ''} »`; else capEl.remove();
     if (s.narration) li.title = `Narration : ${s.narration}`;
     const input = li.querySelector('input'); input.value = s.duration;
     input.addEventListener('change', () => {
@@ -280,6 +284,9 @@ async function plan() {
     const r = new Realisateur(data, { dryCommand, memory: sm?.memory });
     directed = await r.direct(text, { aspect: ui.aspect.value, style: ui.style.value }, onStep);
     for (const v of Object.values(directed.variants)) { v.captions = ui.captions.checked; v.cursor = ui.cursor.checked; }
+    // Musique demandée : la case se coche ; voix off demandée : le bouton le rappelle.
+    if (directed.brief.music) ui.music.checked = true;
+    if (directed.brief.voice && !voiceTake) showVoiceState('Voix off demandée : touchez « 🎙️ Enregistrer la voix off » pour la dire sur le storyboard.');
     await onStep('ready', '▶ Storyboard prêt : prévisualisez, améliorez ou exportez.');
     steps.get('ready').classList.remove('is-wait');
     chooseVariant(directed.recommended);
@@ -389,7 +396,8 @@ let captionTimer = null;
 // Pendant qu'une fiche est ouverte (elle occupe le bas de l'écran), le titre passe en haut.
 const FICHE_SHOTS = new Set(['open_saint', 'show_profile', 'show_lieux', 'show_croises', 'open_list_item', 'open_apparition', 'open_marker']);
 function showCaption(shot) {
-  const on = playingScn?.captions !== false && shot.caption?.title;
+  // Un message demandé (« Découvrez SanctiMaps ») s'affiche même titres décochés.
+  const on = (playingScn?.captions !== false || shot.caption?.force) && shot.caption?.title;
   const top = FICHE_SHOTS.has(shot.action);
   if (rendering && activeRenderer) { activeRenderer.setCaption(on ? { ...shot.caption, top } : null, shot.duration); return; }
   clearTimeout(captionTimer);
@@ -491,7 +499,9 @@ function pauseCurrent() {
 function newJob(scn, title) {
   return { id: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`, created: Date.now(), updated: Date.now(),
     title: (title || scn.title || 'Vidéo SanctiMaps').trim().slice(0, 80), scenario: JSON.parse(JSON.stringify(scn)), aspect: scn.aspect || ui.aspect.value,
-    fps: 30, framesDone: 0, expected: total(scn), thumb: null, status: 'queued' };
+    fps: 30, framesDone: 0, expected: total(scn), thumb: null, status: 'queued',
+    // Le son : la musique composée par le studio, et la voix off enregistrée pour ce storyboard.
+    music: !!ui.music.checked, voice: voiceTake?.blob || null };
 }
 
 /** « 🎬 Exporter » : la vidéo rejoint la file et se fabrique en arrière-plan. */
@@ -722,7 +732,8 @@ async function assemble(job) {
         setProgress(job, 'encoding', pct);
         keepAlive.update(`assemblage du MP4 — ${pct} %`);
       });
-      log(`MP4 assemblé : ${out.seconds.toFixed(1)} s, ${out.codec === 'avc' ? 'H.264' : 'VP9'}, ${(out.blob.size / 1e6).toFixed(1)} Mo, en ${((performance.now() - t0) / 1000).toFixed(0)} s.`);
+      log(`MP4 assemblé : ${out.seconds.toFixed(1)} s, ${out.codec === 'avc' ? 'H.264' : 'VP9'}${out.sound ? `, son : ${out.sound}` : ''}, ${(out.blob.size / 1e6).toFixed(1)} Mo, en ${((performance.now() - t0) / 1000).toFixed(0)} s.`);
+      if (out.soundNote) log(`Son : ${out.soundNote}.`);
       return out;
     } catch (e) {
       if (e.cancelled || attempt >= 3) throw e;
@@ -1599,3 +1610,93 @@ const stageReady = new Promise((r) => { markReady = r; });
 })();
 
 window.__studio = { get directed() { return directed; }, dryCommand, get renderer() { return activeRenderer; }, get sm() { return sm; }, get director() { return director; }, get scenario() { return scenario; }, plan, data, command };
+
+// ------------------------------------------------------------ voix off
+//
+// Le studio ne parle pas à votre place : vous lisez, il enregistre. Le texte
+// de chaque scène (sa narration, ou à défaut son titre) s'affiche au moment
+// exact où la scène commence dans la vidéo ; le micro s'arrête à la fin. La
+// voix est gardée pour ce storyboard et ajoutée au MP4 à l'export, la musique
+// baissant quand vous parlez (son.js).
+
+const voiceSignature = (scn) => (scn?.shots || []).map((s) => `${s.action}:${s.duration}`).join('|');
+const P = (id) => document.getElementById(id);
+
+function showVoiceState(text) { ui.voiceState.textContent = text; ui.voiceState.hidden = !text; }
+
+function refreshVoiceState() {
+  if (!voiceTake) return;
+  const stale = voiceSignature(scenario) !== voiceTake.signature;
+  showVoiceState(`🎙️ Voix off enregistrée (${voiceTake.seconds.toFixed(0)} s) : elle sera ajoutée à la vidéo.${stale ? ' ⚠️ Le storyboard a changé depuis : réenregistrez-la pour qu\'elle tombe juste.' : ''}`);
+}
+
+/** Les répliques : le texte de chaque scène, et quand il commence. */
+function cues(scn) {
+  let t = 0;
+  return scn.shots.map((s) => {
+    const cue = { from: t, to: t + s.duration, label: s.purpose || s.label || '',
+      text: s.narration || (s.caption?.title ? `${s.caption.title}${s.caption.sub ? ' — ' + s.caption.sub : ''}` : '') };
+    t += s.duration; return cue;
+  });
+}
+
+async function recordVoice() {
+  if (!scenario?.shots?.length) { await plan(); if (!scenario?.shots?.length) return; }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { toast("Ce navigateur ne permet pas d'enregistrer le micro.", [], 4000); return; }
+  const box = P('prompter'), go = P('prompter-go'), keep = P('prompter-keep'), again = P('prompter-again'), audio = P('prompter-audio');
+  const list = cues(scenario), length = total(scenario);
+  let stream = null, rec = null, chunks = [], timer = null, take = null, t0 = 0;
+  const show = (i, t) => {
+    const c = list[i] || list.at(-1);
+    P('prompter-scene').textContent = c ? `Scène ${i + 1} / ${list.length} · ${c.label}` : '';
+    P('prompter-text').textContent = c?.text || '…';
+    P('prompter-next').textContent = list[i + 1]?.text ? `Ensuite : ${list[i + 1].text}` : '';
+    P('prompter-time').textContent = `${t.toFixed(1)} / ${length.toFixed(0)} s`;
+    P('prompter-fill').style.width = `${Math.min(100, (t / length) * 100)}%`;
+  };
+  const reset = () => { go.hidden = false; go.textContent = '● Commencer'; keep.hidden = true; again.hidden = true; audio.hidden = true; show(0, 0); };
+  const stopAll = () => { clearInterval(timer); timer = null; if (rec?.state === 'recording') rec.stop(); stream?.getTracks().forEach((t) => t.stop()); };
+  const finish = () => new Promise((resolve) => {
+    if (!rec || rec.state === 'inactive') { resolve(); return; }
+    rec.onstop = () => resolve(); stopAll();
+  });
+  const start = async () => {
+    go.disabled = true;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch (e) { go.disabled = false; toast(`Micro refusé (${e.message}).`, [], 4000); return; }
+    for (const n of [3, 2, 1]) { P('prompter-text').textContent = `Prêt… ${n}`; await new Promise((r) => setTimeout(r, 700)); }
+    chunks = [];
+    const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported?.(m)) || '';
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.start(250);
+    t0 = performance.now();
+    go.disabled = false; go.textContent = '■ Arrêter';
+    timer = setInterval(async () => {
+      const t = (performance.now() - t0) / 1000;
+      const i = list.findIndex((c) => t < c.to);
+      show(i < 0 ? list.length - 1 : i, Math.min(t, length));
+      if (t >= length) await done();
+    }, 100);
+  };
+  const done = async () => {
+    if (!rec) return;
+    await finish();
+    const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+    rec = null;
+    take = { blob, seconds: Math.min(length, (performance.now() - t0) / 1000), signature: voiceSignature(scenario) };
+    audio.src = URL.createObjectURL(blob); audio.hidden = false;
+    P('prompter-text').textContent = 'Écoutez votre voix, puis gardez-la ou recommencez.';
+    P('prompter-next').textContent = '';
+    go.hidden = true; keep.hidden = false; again.hidden = false;
+  };
+  go.onclick = () => (rec ? done() : start());
+  again.onclick = () => { take = null; reset(); };
+  keep.onclick = () => { voiceTake = take; refreshVoiceState(); close(); log(`Voix off enregistrée (${take.seconds.toFixed(0)} s) : ajoutée à la prochaine vidéo exportée.`); };
+  const close = () => { stopAll(); box.hidden = true; if (audio.src) URL.revokeObjectURL(audio.src); audio.removeAttribute('src'); };
+  P('prompter-close').onclick = close;
+  reset(); box.hidden = false;
+}
+
+ui.voice.addEventListener('click', recordVoice);
+

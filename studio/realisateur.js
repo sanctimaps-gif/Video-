@@ -105,7 +105,7 @@ export class Realisateur {
       request, target: parseDuration(text), aspect: parseAspect(text) || defaults.aspect || '16:9',
       styleAsked: parseStyle(text) || (defaults.style && defaults.style !== 'auto' ? defaults.style : null),
       saints: [], countries: [], continents: [], places: [], century: parseCentury(text), calendar: null, apparitions: false,
-      wants: {}, start: null, end: null, explicit: [], unsupported: [], notes: [], captions: true,
+      wants: {}, start: null, end: null, explicit: [], unsupported: [], notes: [], captions: true, messages: [], music: false, voice: false,
     };
     brief.targetGiven = !!brief.target;
     if (!brief.target) brief.target = DEFAULT_DURATION;
@@ -166,9 +166,24 @@ export class Realisateur {
         : iso ? { kind: 'country', iso } : /\b(pays|vue generale|vue d ensemble)\b/.test(c) ? { kind: 'country' }
           : /\bfiche\b/.test(c) ? { kind: 'profile' } : null;
     }
-    // Ce que le moteur vidéo ne sait pas faire : on le dit au lieu de faire semblant.
-    if (/\b(musique|bande son|chanson|sonore)\b/.test(t)) brief.unsupported.push('La musique : le moteur produit une vidéo muette (ajoutez la musique au montage, dans Photos ou CapCut).');
-    if (/\b(voix off|voix|narrat\w* audio|commentaire audio|doublage|lu a voix haute)\b/.test(t)) brief.unsupported.push('La voix off : le studio ne parle pas. Le texte de narration de chaque scène est fourni pour l\'enregistrer vous-même.');
+    // Le son : une musique composée par le studio, et la voix off qu'on enregistre soi-même.
+    if (/\b(musique|bande son|chanson|sonore|ambiance musicale)\b/.test(t)) {
+      brief.music = true;
+      brief.notes.push('Musique : une musique d\'ambiance douce, composée par le studio sur l\'appareil, est ajoutée à la vidéo (case « Musique »).');
+    }
+    if (/\b(voix off|voix|narrat\w* audio|commentaire audio|doublage|lu a voix haute)\b/.test(t)) {
+      brief.voice = true;
+      brief.notes.push('Voix off : « 🎙️ Enregistrer la voix off » fait défiler le texte de chaque scène au bon moment pendant que vous lisez ; votre voix est ajoutée à la vidéo, la musique baisse quand vous parlez.');
+    }
+    // Un message à afficher tel quel : « Affiche le message : « Découvrez SanctiMaps » ».
+    for (const m of text.matchAll(/\b(?:affiche|afficher|ecris|écris|écrire|ecrire|montre|ajoute|termine (?:par|avec)|finis? (?:par|avec))\b[^«"“\n]{0,40}?[«"“]\s*([^»"”\n]{2,90}?)\s*[»"”]/gi)) {
+      const at = m.index / Math.max(1, text.length);
+      const around = fold(text.slice(Math.max(0, m.index - 80), m.index + m[0].length + 40));
+      brief.messages = brief.messages || [];
+      brief.messages.push({ text: m[1].trim(), end: at > 0.55 || /\b(fin|finale?|termine|conclu\w*|dernier\w*)\b/.test(around) });
+    }
+    // « Montre les fonctionnalités du site » : une démonstration, avec les vraies commandes.
+    if (/\b(fonctionnalites?|demonstrations?|demontr\w*|ce que (le site|l application|sanctimaps) (permet|propose|sait faire)|tour (de l application|du site|de sanctimaps)|presentation (du site|de l application|de sanctimaps)|decouvrir (le site|l application))\b/.test(t)) brief.wants.demo = true;
     if (/\b(fondu|fondus|enchaine|transitions?)\b/.test(t) || /apparitions? progressives?/.test(t)) brief.notes.push('Transitions : la vidéo est un seul plan continu ; les transitions sont des mouvements de caméra fluides (pas de fondus).');
     if (/\b(drone|3d|relief|satellite)\b/.test(t)) brief.unsupported.push('Les vues 3D ou satellite : SanctiMaps est une carte à plat.');
 
@@ -176,6 +191,9 @@ export class Realisateur {
     // panneaux…), traduites par l'analyseur existant, sans rien inventer.
     for (const clause of splitClauses(text)) {
       if (this.isMeta(clause) || this.isUnderstood(clause, brief, taken)) continue;
+      // Un message entre guillemets, une démonstration du site : pris en charge par le storyboard.
+      if ((brief.messages || []).some((m) => clause.includes(m.text)) || /[«"“]/.test(clause)) continue;
+      if (brief.wants.demo && /\b(fonctionnalit\w*|demonstr\w*|demontr\w*|presentation)\b/.test(fold(clause))) continue;
       const shots = await this.translate(clause);
       if (shots?.length) { brief.explicit.push({ clause, shots, opening: /\bcommence|d abord|pour commencer\b/.test(fold(clause)) }); continue; }
       const fallback = this.pressFallback(clause);
@@ -347,12 +365,60 @@ export class Realisateur {
       }
     }
 
+    // La démonstration des fonctionnalités : chaque outil du site, montré pour de vrai.
+    if (brief.wants.demo) this.demoTour(add, V, S);
+    // Un message demandé en cours de vidéo : un carton, juste après l'introduction.
+    for (const m of brief.messages.filter((x) => !x.end)) {
+      scenes.splice(1, 0, this.scene('hold', {}, { purpose: 'Message demandé', priority: 1, weight: 0.6, minimum: 3,
+        caption: { title: m.text, sub: 'sanctimaps.fr', force: true }, narration: m.text }));
+    }
+
     // Les autres actions demandées (jeux, paramètres, panneaux…), avant la conclusion.
     for (const e of brief.explicit.filter((x) => !x.opening)) for (const sh of e.shots) add(sh.action, sh.params, { purpose: 'Demande : ' + e.clause, priority: 1 });
 
     // Conclusion : jamais une fin brutale.
     this.conclude(brief, scenes, add, { home: brief.end?.iso || home, title, S });
-    return this.finalize(brief, scenes, variantName, styleName);
+    // Le message de fin (« Découvrez SanctiMaps ») : le titre de la dernière scène, toujours affiché.
+    const fin = brief.messages.filter((x) => x.end).at(-1);
+    if (fin) {
+      const last = scenes.at(-1);
+      last.caption = { title: fin.text, sub: 'sanctimaps.fr', force: true };
+      last.narration = fin.text; last.minimum = Math.max(last.minimum || 0, 3.5); last.purpose += ' — message de fin';
+    }
+    const sc = this.finalize(brief, scenes, variantName, styleName);
+    sc.music = !!brief.music; sc.voiceWanted = !!brief.voice;
+    return sc;
+  }
+
+  /**
+   * Les fonctionnalités du site, chacune montrée par sa vraie commande : la
+   * recherche, la fiche et ses lieux, le saint du jour, les apparitions, les
+   * jeux. Rien n'est simulé : la répétition retire ce qui ne marcherait pas.
+   */
+  demoTour(add, V, S) {
+    const who = S ? nameOf(S) : 'Thérèse de Lisieux';
+    add('search_list', { query: who }, { purpose: 'Fonctionnalité : la recherche', priority: 1, weight: 0.8,
+      caption: { title: 'Rechercher un saint', sub: 'Par nom, pays, siècle ou date de fête' },
+      narration: 'Cherchez un saint par son nom, son pays, son siècle ou sa date de fête.' });
+    if (!S) {
+      add('open_list_item', { index: 0 }, { purpose: 'Fonctionnalité : la fiche', priority: 2, weight: 0.6 });
+      add('show_profile', {}, { purpose: 'Fonctionnalité : la fiche', priority: 2, weight: 1.2, minimum: 3 * V.reading,
+        caption: { title: 'La fiche du saint', sub: 'Biographie, dates, fête, lieux de sa vie' },
+        narration: 'Chaque fiche raconte sa vie, ses dates, sa fête et les lieux qu\'il a marqués.' });
+    }
+    add('close_panel', {}, { purpose: 'Retour à la carte', priority: 3, weight: 0.3 });
+    add('calendar', { day: "aujourd'hui" }, { purpose: 'Fonctionnalité : le saint du jour', priority: 1, weight: 1,
+      caption: { title: 'Le saint du jour', sub: 'D\'après le calendrier liturgique' },
+      narration: 'Chaque jour, découvrez le saint fêté par l\'Église.' });
+    add('close_panel', {}, { purpose: 'Retour à la carte', priority: 3, weight: 0.3 });
+    add('apparitions_on', {}, { purpose: 'Fonctionnalité : les apparitions', priority: 1, weight: 1,
+      caption: { title: 'Apparitions et miracles', sub: 'Lourdes, Fátima, Guadalupe…' },
+      narration: 'Explorez aussi les apparitions et les miracles, de Lourdes à Guadalupe.' });
+    add('apparitions_off', {}, { purpose: 'Retour aux saints', priority: 2, weight: 0.4 });
+    add('open_tab', { tab: 'jeux' }, { purpose: 'Fonctionnalité : les jeux', priority: 2, weight: 1,
+      caption: { title: 'Des jeux', sub: 'Quiz, chaîne de saints, Qui est-ce ?' },
+      narration: 'Et jouez : quiz, chaîne de saints, qui est-ce ?' });
+    add('close_panel', {}, { purpose: 'Retour à la carte', priority: 2, weight: 0.3 });
   }
 
   approach(add, V, cont, iso, withContinent = V.continent) {
@@ -557,7 +623,7 @@ export class Realisateur {
       if (S[i].action === 'fit_country' && S[i - 1].action === 'open_country' && S[i].params.country === S[i - 1].params.country) { S.splice(i, 1); changes.push('Recadrage sur le pays déjà cadré retiré.'); }
     }
     // Pas de longue pause au milieu de la vidéo.
-    S.forEach((s, i) => { if (s.action === 'hold' && i < S.length - 1 && s.duration > 3) { changes.push(`Pause raccourcie (${s.duration.toFixed(1)} → 2 s).`); s.duration = 2; } });
+    S.forEach((s, i) => { if (s.action === 'hold' && !s.caption?.force && i < S.length - 1 && s.duration > 3) { changes.push(`Pause raccourcie (${s.duration.toFixed(1)} → 2 s).`); s.duration = 2; } });
     // Une fiche ouverte doit être lue ; une fiche lue doit d'abord être ouverte.
     for (let i = 0; i < S.length; i++) {
       if (OPENS_FICHE.has(S[i].action) && S[i + 1]?.action !== 'show_profile' && !['show_lieux', 'show_croises'].includes(S[i + 1]?.action)) {
@@ -629,7 +695,7 @@ export class Realisateur {
       this.fitTiming(sc, target);
       check(true, `Durées rééquilibrées${off ? ` (total ramené à ${target} s)` : ''}${short.length ? ` ; scènes trop courtes allongées : ${short.map((s) => s.label).join(', ')}` : ''}.`, true);
     } else check(true, `Durée totale : ${total(sc).toFixed(0)} s${target ? ` (demandé : ${target} s)` : ''}.`);
-    const deadTime = sc.shots.filter((s, i) => s.action === 'hold' && i < sc.shots.length - 1 && s.duration > 3);
+    const deadTime = sc.shots.filter((s, i) => s.action === 'hold' && !s.caption?.force && i < sc.shots.length - 1 && s.duration > 3);
     check(!deadTime.length, deadTime.length ? 'Pauses longues au milieu de la vidéo.' : 'Pas de temps mort.');
     // Les éléments demandés sont présents.
     if (brief) {
@@ -638,7 +704,13 @@ export class Realisateur {
       if (brief.saints.length && !has('open_saint')) missing.push(`la fiche de ${nameOf(brief.saints[0])}`);
       if (brief.wants.lieux && brief.saints.length && !has('show_lieux') && !has('frame_view')) missing.push('les lieux du saint');
       for (const p of brief.places) if (!sc.shots.some((s) => fold(s.params?.place || s.params?.near || '') === fold(p.name))) missing.push(p.name);
+      if (brief.wants.demo && !has('search_list') && !has('calendar')) missing.push('la démonstration des fonctionnalités');
+      for (const m of brief.messages || []) if (!sc.shots.some((s) => s.caption?.title === m.text)) missing.push(`le message « ${m.text} »`);
       check(!missing.length, missing.length ? `Non réalisable avec les données actuelles : ${missing.join(', ')}.` : 'Tous les éléments demandés sont dans le storyboard.');
+      if (brief.wants.demo) check(true, 'Fonctionnalités montrées avec les vraies commandes : recherche, saint du jour, apparitions, jeux.');
+      for (const m of brief.messages || []) check(true, `Message « ${m.text} » affiché à l'écran${m.end ? ' à la fin' : ''}.`);
+      if (brief.music) check(true, 'Musique : composée par le studio et ajoutée à la vidéo.');
+      if (brief.voice) check(true, 'Voix off : à enregistrer avec « 🎙️ Enregistrer la voix off » (texte de chaque scène fourni, au bon moment).');
       for (const u of brief.unsupported) check(false, u);
     }
     check(true, 'Transitions : mouvements de caméra continus et adoucis, sans coupe.');
