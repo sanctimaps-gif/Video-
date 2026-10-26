@@ -270,6 +270,7 @@ export class FrameRenderer {
         const t0 = performance.now();
         this.overlay = await domToCanvas(this.context);
         this.overlayMs += performance.now() - t0; this.overlayRenders += 1;
+        this.backup('goodOverlay', this.overlay);
       } finally {
         for (const [el, bg] of saved) el.style.background = bg;
         this.observer.takeRecords();
@@ -309,14 +310,49 @@ export class FrameRenderer {
     if (this.batch.length >= 15) await this.flush();
   }
 
+  /**
+   * Une image. Si Safari n'arrive pas à dessiner la carte ou l'interface à
+   * cet instant (menu qui s'ouvre, image du site pas encore prête…), la
+   * dernière version réussie est réutilisée : une image un peu figée vaut
+   * mieux qu'un rendu qui repart de zéro. Seul un échec qui dure (4 s) arrête.
+   */
   async drawFrame() {
     this.ctx.fillStyle = this.seaColor(); this.ctx.fillRect(0, 0, this.width, this.height);
     const t0 = performance.now();
-    await this.drawMap();
+    try {
+      await this.drawMap();
+      this.backup('goodMap', this.canvas);
+      this.mapFails = 0;
+    } catch (e) {
+      this.trouble('carte', e, 'mapFails');
+      if (this.goodMap) this.ctx.drawImage(this.goodMap, 0, 0);
+    }
     this.mapMs += performance.now() - t0;
-    await this.drawOverlay();
+    try {
+      await this.drawOverlay();
+      this.overlayFails = 0;
+    } catch (e) {
+      this.dirty = true;
+      this.trouble('interface', e, 'overlayFails');
+      if (this.goodOverlay) this.ctx.drawImage(this.goodOverlay, 0, 0, this.width, this.height);
+    }
     this.drawCaption();
     this.drawCursor();
+  }
+
+  /** Copie de secours d'un calque réussi (une seule toile par calque, réutilisée). */
+  backup(name, source) {
+    let c = this[name];
+    if (!c) { c = this[name] = document.createElement('canvas'); }
+    if (c.width !== source.width || c.height !== source.height) { c.width = source.width; c.height = source.height; }
+    const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); g.drawImage(source, 0, 0);
+  }
+
+  trouble(what, e, counter) {
+    this[counter] = (this[counter] || 0) + 1;
+    const msg = `${what} : ${e?.message || e}`;
+    if (msg !== this.lastTrouble) { this.lastTrouble = msg; this.onWarn?.(`Image ${this.frames} — ${msg} (image précédente réutilisée)`); }
+    if (this[counter] > this.fps * 4) throw e;
   }
 
   /**
@@ -427,7 +463,7 @@ export class FrameRenderer {
 
   /** Rend la mémoire des toiles tout de suite (Safari les garde sinon longtemps). */
   release() {
-    for (const c of [this.canvas, this.overlayCanvas]) if (c) { c.width = 0; c.height = 0; }
+    for (const c of [this.canvas, this.overlayCanvas, this.goodMap, this.goodOverlay]) if (c) { c.width = 0; c.height = 0; }
     this.images.clear(); this.styleCache.clear(); this.overlay = null;
   }
 }

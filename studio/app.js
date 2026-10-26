@@ -580,6 +580,8 @@ async function processJob(job) {
         if (e.cancelled || e.paused) throw e;
         log(`Incident : ${e.message}`);
         const fresh = (await library.jobs().catch(() => [])).find((j) => j.id === job.id);
+        // L'incident reste visible dans « Vidéos en cours » (utile pour comprendre un souci sur le téléphone).
+        if (fresh) { fresh.lastError = `${e.message} (vers ${(fresh.framesDone / 30).toFixed(1)} s)`; await library.saveJob(fresh).catch(() => {}); renderTasks(); }
         // Déjà terminée (l'incident a eu lieu après le rangement) : on ne recommence surtout pas.
         if (!fresh || fresh.status === 'done') { saved = 'noplan'; break; }
         // Page en arrière-plan : le téléphone a coupé quelque chose (base, décodage) ;
@@ -671,6 +673,7 @@ async function renderJob(job) {
       } });
     await renderer.start();
     renderer.cursorOf = () => (sm.useCursor ? { ...sm.cursor, now: clock.now() } : null);
+    renderer.onWarn = (msg) => log(msg);
     ui.progress.hidden = false;
     let lastBeat = Date.now(), lastUi = 0, lastHeart = 0;
     const onFrame = () => {
@@ -760,6 +763,7 @@ async function renderTasks() {
     li.querySelector('.task-state').textContent = job.paused ? `En pause : ${job.paused}` : job.failed ? `Interrompue : ${job.failed}`
       : `${STATUS[live?.status || job.status] || job.status}${(live?.status || job.status) !== 'queued' && pct ? ` — ${Math.floor(pct)} %` : ''}${queueRunning && !live && job.status !== 'queued' ? ' — reprise automatique dès que la carte est chargée…' : ''}`;
     li.querySelector('.task-bar span').style.width = `${pct}%`;
+    if (job.lastError && !job.failed) li.querySelector('.task-bar').insertAdjacentHTML('afterend', '<div class="task-state task-err"></div>'), li.querySelector('.task-err').textContent = `Dernier incident : ${job.lastError}`;
     const actions = li.querySelector('.task-actions');
     const btn = (label, fn, cls = '') => { const b = document.createElement('button'); b.className = `mini ${cls}`; b.textContent = label; b.addEventListener('click', fn); actions.append(b); };
     if (job.failed || job.paused) {
