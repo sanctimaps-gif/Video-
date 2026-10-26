@@ -581,7 +581,12 @@ async function processJob(job) {
         log(`Incident : ${e.message}`);
         const fresh = (await library.jobs().catch(() => [])).find((j) => j.id === job.id);
         // L'incident reste visible dans « Vidéos en cours » (utile pour comprendre un souci sur le téléphone).
-        if (fresh) { fresh.lastError = `${e.message} (vers ${(fresh.framesDone / 30).toFixed(1)} s)`; await library.saveJob(fresh).catch(() => {}); renderTasks(); }
+        // Deux incidents au même endroit : le téléphone manque sans doute de mémoire, on passe en mode allégé.
+        if (fresh) {
+          fresh.lastError = `${e.message} (vers ${(fresh.framesDone / 30).toFixed(1)} s)`;
+          if (fresh.framesDone <= before && !fresh.light && stalled >= 0) { fresh.light = true; log('Deux incidents au même endroit : passage en mode allégé (moins de mémoire).'); }
+          await library.saveJob(fresh).catch(() => {}); renderTasks();
+        }
         // Déjà terminée (l'incident a eu lieu après le rangement) : on ne recommence surtout pas.
         if (!fresh || fresh.status === 'done') { saved = 'noplan'; break; }
         // Page en arrière-plan : le téléphone a coupé quelque chose (base, décodage) ;
@@ -661,7 +666,8 @@ async function renderJob(job) {
       Object.assign(job, { width: w, height: h, expected, framesDone: 0, thumbAt: Math.round(expected * 30 * 0.4), status: 'rendering', updated: Date.now() });
       await library.saveJob(job);
     } else log(`Reprise de « ${job.title} » à ${(job.framesDone / 30).toFixed(1)} s : l'agent rejoue sans filmer jusque-là.`);
-    const renderer = activeRenderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30, skip: job.framesDone, thumbAt: job.thumb ? -1 : job.thumbAt,
+    if (job.light) log(`« ${job.title} » : mode allégé (moins de mémoire).`);
+    const renderer = activeRenderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30, skip: job.framesDone, thumbAt: job.thumb ? -1 : job.thumbAt, light: !!job.light,
       store: async (batch, thumb, done) => {
         job.framesDone = done; job.updated = Date.now();
         if (thumb) job.thumb = thumb;
@@ -820,7 +826,10 @@ async function autoResume() {
     j.crashes = (j.crashFrames != null && j.framesDone < j.crashFrames + 90) ? (j.crashes || 0) + 1 : 1;
     j.crashFrames = j.framesDone;
     log(`Au dernier passage, la page a été rechargée pendant la fabrication de « ${j.title} » (${j.crashes}).`);
-    if (j.crashes >= 2) {
+    // Premier rechargement : on retente en mode allégé (moins de mémoire) ; s'il
+    // ne suffit pas, la vidéo se met en pause.
+    if (!j.light) { j.light = true; j.crashes = 0; log(`« ${j.title} » : reprise en mode allégé (moins de mémoire).`); }
+    else if (j.crashes >= 2) {
       j.paused = 'le téléphone a rechargé la page plusieurs fois pendant la fabrication (mémoire insuffisante ?)';
       log(`« ${j.title} » mise en pause pour que l'application reste utilisable. Fermez d'autres onglets ou applications, puis « Reprendre ».`);
     }

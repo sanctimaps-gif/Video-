@@ -83,8 +83,12 @@ export class FrameRenderer {
    * images sont seulement comptées (reprise d'un rendu interrompu : elles sont
    * déjà rangées).
    */
-  constructor(iframe, { width, height, fps = 30, store, skip = 0, thumbAt = 0, quality = 0.86 }) {
-    this.iframe = iframe; this.width = width; this.height = height; this.fps = fps;
+  /**
+   * ``light`` : mode allégé, pour un téléphone à court de mémoire — le calque
+   * d'interface (la « photo » de la page) est pris à demi-résolution.
+   */
+  constructor(iframe, { width, height, fps = 30, store, skip = 0, thumbAt = 0, quality = 0.86, light = false }) {
+    this.iframe = iframe; this.width = width; this.height = height; this.fps = fps; this.light = light;
     this.store = store; this.skip = skip; this.quality = quality; this.batch = []; this.bytes = 0;
     this.canvas = document.createElement('canvas');
     this.canvas.width = width; this.canvas.height = height;
@@ -97,6 +101,7 @@ export class FrameRenderer {
   async start() {
     const D = this.D;
     this.scale = this.width / D.documentElement.clientWidth;
+    this.overlayScale = this.scale * (this.light ? 0.5 : 1);
     // Tout changement hors de la carte rend le calque d'interface périmé.
     this.observer = new this.iframe.contentWindow.MutationObserver((list) => {
       const svg = D.querySelector('svg.map');
@@ -104,14 +109,14 @@ export class FrameRenderer {
     });
     this.observer.observe(D.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
     this.context = await createContext(D.documentElement, {
-      width: D.documentElement.clientWidth, height: D.documentElement.clientHeight, scale: this.scale,
+      width: D.documentElement.clientWidth, height: D.documentElement.clientHeight, scale: this.overlayScale,
       filter: (node) => this.keep(node),
       fetch: { requestInit: { mode: 'cors' } },
     });
     // Une seule toile pour le calque d'interface, réutilisée à chaque rendu.
     this.overlayCanvas = document.createElement('canvas');
-    this.overlayCanvas.width = Math.floor(D.documentElement.clientWidth * this.scale);
-    this.overlayCanvas.height = Math.floor(D.documentElement.clientHeight * this.scale);
+    this.overlayCanvas.width = Math.floor(D.documentElement.clientWidth * this.overlayScale);
+    this.overlayCanvas.height = Math.floor(D.documentElement.clientHeight * this.overlayScale);
     this.context.reuseCanvas = this.overlayCanvas;
   }
 
@@ -303,7 +308,18 @@ export class FrameRenderer {
     }
     // La vignette de la bibliothèque : une image prise vers le premier tiers.
     if (!this.thumb && this.thumbAt >= 0 && this.frames >= this.thumbAt) this.captureThumb();
-    const blob = await toJpeg(this.canvas, this.quality);
+    // L'iPhone peut refuser une image quand sa mémoire de dessin est pleine :
+    // on libère les copies de secours et on réessaie, au lieu de tout recommencer.
+    let blob = null;
+    for (let k = 0; !blob; k++) {
+      try { blob = await toJpeg(this.canvas, this.quality); } catch (e) {
+        if (k >= 3) throw e;
+        for (const c of [this.goodMap, this.goodOverlay]) if (c) { c.width = 0; c.height = 0; }
+        this.goodMap = this.goodOverlay = null;
+        this.onWarn?.(`Image ${this.frames} — enregistrement refusé (${e.message}), nouvel essai`);
+        await new Promise((r) => setTimeout(r, 300 * (k + 1)));
+      }
+    }
     this.bytes += blob.size;
     this.batch.push({ i: this.frames, blob });
     this.frames += 1;
@@ -352,7 +368,8 @@ export class FrameRenderer {
     this[counter] = (this[counter] || 0) + 1;
     const msg = `${what} : ${e?.message || e}`;
     if (msg !== this.lastTrouble) { this.lastTrouble = msg; this.onWarn?.(`Image ${this.frames} — ${msg} (image précédente réutilisée)`); }
-    if (this[counter] > this.fps * 4) throw e;
+    // Pas d'arrêt pour une image ratée : la précédente sert, aussi longtemps qu'il le faut.
+    if (this[counter] > this.fps * 60) throw e;
   }
 
   /**
