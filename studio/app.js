@@ -667,16 +667,35 @@ async function renderJob(job) {
       await library.saveJob(job);
     } else log(`Reprise de « ${job.title} » à ${(job.framesDone / 30).toFixed(1)} s : l'agent rejoue sans filmer jusque-là.`);
     if (job.light) log(`« ${job.title} » : mode allégé (moins de mémoire).`);
-    const renderer = activeRenderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30, skip: job.framesDone, thumbAt: job.thumb ? -1 : job.thumbAt, light: !!job.light,
+    // Plafond : la durée prévue, plus un quart et 5 s de marge. Au-delà, le
+    // scénario s'arrête et la vidéo se termine, au lieu de tourner sans fin.
+    const maxFrames = Math.round((expected * 1.25 + 5) * 30);
+    const renderer = activeRenderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30, skip: job.framesDone, thumbAt: job.thumb ? -1 : job.thumbAt, light: !!job.light, maxFrames,
       store: async (batch, thumb, done) => {
+        const prevDone = job.framesDone, prevThumb = job.thumb;
         job.framesDone = done; job.updated = Date.now();
         if (thumb) job.thumb = thumb;
-        try { await library.putFrames(job, batch); } catch (e) {
-          const err = new Error(e?.name === 'QuotaExceededError' ? "plus de place sur l'appareil pour les images de la vidéo" : `images non rangées (${e?.message})`);
-          err.fatal = e?.name === 'QuotaExceededError';
-          throw err;
+        // Un rangement refusé est retenté sur place (après le retour dans Safari si
+        // la page est en arrière-plan) : sinon tout le rendu serait rejoué depuis 0.
+        for (let k = 0; ; k++) {
+          try { await library.putFrames(job, batch); return; } catch (e) {
+            const full = e?.name === 'QuotaExceededError';
+            if (full || k >= 5) {
+              job.framesDone = prevDone; job.thumb = prevThumb;
+              const err = new Error(full ? "plus de place sur l'appareil pour les images de la vidéo" : `images non rangées (${e?.message})`);
+              err.fatal = full;
+              throw err;
+            }
+            log(`Images non rangées (${e?.message}) : nouvel essai.`);
+            if (document.hidden) await untilVisible();
+            await new Promise((r) => setTimeout(r, 1000 * (k + 1)));
+          }
         }
       } });
+    renderer.onLimit = () => {
+      log(`« ${job.title} » : durée prévue largement dépassée (${(maxFrames / 30).toFixed(0)} s) — fin de la vidéo ici.`);
+      director.stop();
+    };
     await renderer.start();
     renderer.cursorOf = () => (sm.useCursor ? { ...sm.cursor, now: clock.now() } : null);
     renderer.onWarn = (msg) => log(msg);
@@ -710,7 +729,7 @@ async function renderJob(job) {
     job.frames = done.frames; job.framesDone = done.frames; job.status = 'encoding'; job.updated = Date.now();
     if (done.thumb && !job.thumb) job.thumb = done.thumb;
     await library.saveJob(job);
-    log(`Images rendues : ${(done.frames / 30).toFixed(1)} s, ${w}×${h}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte ${done.stats.mapMs.toFixed(0)} ms/image, interface ${done.stats.overlayRenders}× ${done.stats.overlayMs.toFixed(0)} ms, ${(done.bytes / 1e6).toFixed(0)} Mo d'images).`);
+    log(`Images rendues : ${(done.frames / 30).toFixed(1)} s, ${w}×${h}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte redessinée ${done.stats.mapRenders}×, ${done.stats.mapMs.toFixed(0)} ms/image, interface ${done.stats.overlayRenders}× ${done.stats.overlayMs.toFixed(0)} ms, ${(done.bytes / 1e6).toFixed(0)} Mo d'images).`);
   }
   const out = await assemble(job);
   setProgress(job, 'finalizing', 100);

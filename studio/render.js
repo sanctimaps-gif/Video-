@@ -87,8 +87,16 @@ export class FrameRenderer {
    * ``light`` : mode allégé, pour un téléphone à court de mémoire — le calque
    * d'interface (la « photo » de la page) est pris à demi-résolution.
    */
-  constructor(iframe, { width, height, fps = 30, store, skip = 0, thumbAt = 0, quality = 0.86, light = false }) {
-    this.iframe = iframe; this.width = width; this.height = height; this.fps = fps; this.light = light;
+  /**
+   * ``maxFrames`` : plafond de la vidéo. Au-delà, plus aucune image n'est
+   * filmée et ``onLimit()`` prévient le studio, qui arrête le scénario : la
+   * vidéo se termine toujours, même si une action traîne.
+   */
+  constructor(iframe, { width, height, fps = 30, store, skip = 0, thumbAt = 0, quality = 0.86, light = false, maxFrames = Infinity }) {
+    this.iframe = iframe; this.width = width; this.height = height; this.fps = fps; this.light = light; this.maxFrames = maxFrames;
+    // Mémoire gardée pour les images de la carte (en caractères de data: URL).
+    this.imageBudget = light ? 10e6 : 24e6; this.imageChars = 0;
+    this.mapDirty = true; this.mapAge = 0; this.mapRenders = 0;
     this.store = store; this.skip = skip; this.quality = quality; this.batch = []; this.bytes = 0;
     this.canvas = document.createElement('canvas');
     this.canvas.width = width; this.canvas.height = height;
@@ -103,10 +111,10 @@ export class FrameRenderer {
     this.scale = this.width / D.documentElement.clientWidth;
     this.overlayScale = this.scale * (this.light ? 0.5 : 1);
     // Tout changement hors de la carte rend le calque d'interface périmé.
-    this.observer = new this.iframe.contentWindow.MutationObserver((list) => {
-      const svg = D.querySelector('svg.map');
-      if (list.some((m) => !svg || !svg.contains(m.target))) this.dirty = true;
-    });
+    // La carte, elle, n'est redessinée que si elle a changé (ou si un de ses
+    // parents a changé : thème, mode) : la sérialiser et la décoder à chaque
+    // image saturait la mémoire de l'iPhone, qui rechargeait alors la page.
+    this.observer = new this.iframe.contentWindow.MutationObserver((list) => this.noteMutations(list));
     this.observer.observe(D.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
     this.context = await createContext(D.documentElement, {
       width: D.documentElement.clientWidth, height: D.documentElement.clientHeight, scale: this.overlayScale,
@@ -125,6 +133,17 @@ export class FrameRenderer {
    * listes (recherche, saint du jour, « N saints ici ») peuvent compter des
    * milliers de lignes, dont seules celles visibles à l'écran sont gardées.
    */
+  noteMutations(list, overlay = true) {
+    const svg = this.D.querySelector('svg.map');
+    for (const m of list) {
+      // Les fonds rendus transparents le temps de la photo de l'interface : rien n'a changé.
+      if (this.tweaked?.has(m.target) && m.type === 'attributes' && m.attributeName === 'style') continue;
+      const inMap = svg && svg.contains(m.target);
+      if (!svg || inMap || m.target.contains?.(svg)) this.mapDirty = true;
+      if (overlay && !inMap) this.dirty = true;
+    }
+  }
+
   keep(node) {
     if (node.nodeType !== 1) return true;
     if (['NOSCRIPT', 'SCRIPT', 'TEMPLATE'].includes(node.tagName) || node.matches('svg.map')) return false;
@@ -146,19 +165,33 @@ export class FrameRenderer {
    */
   async inlineImage(url, max = 0) {
     if (!url || url.startsWith('data:')) return url;
-    if (!this.images.has(url)) {
-      // Les fonds de carte déjà vus restent en mémoire, dans une limite raisonnable.
-      if (this.images.size >= 600) this.images.delete(this.images.keys().next().value);
-      this.images.set(url, (async () => {
-        try {
-          const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 6000);
-          const blob = await (await fetch(url, { mode: 'cors', signal: ctrl.signal })).blob();
-          if (max) { const small = await shrink(blob, max); if (small) return small; }
-          return await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(null); fr.readAsDataURL(blob); });
-        } catch { return null; }
-      })());
+    const hit = this.images.get(url);
+    if (hit) {
+      // Le plus récemment utilisé passe en fin de file : les plus anciens partent d'abord.
+      this.images.delete(url); this.images.set(url, hit);
+      return hit.data;
     }
-    return this.images.get(url);
+    const entry = { size: 0 };
+    entry.data = (async () => {
+      try {
+        const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 6000);
+        const blob = await (await fetch(url, { mode: 'cors', signal: ctrl.signal })).blob();
+        let data = max ? await shrink(blob, max) : null;
+        if (!data) data = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(null); fr.readAsDataURL(blob); });
+        if (data && this.images.get(url) === entry) { entry.size = data.length; this.imageChars += data.length; this.trimImages(); }
+        return data;
+      } catch { this.images.delete(url); return null; }
+    })();
+    this.images.set(url, entry);
+    return entry.data;
+  }
+
+  /** Les fonds de carte déjà vus restent en mémoire, dans une limite de taille (et non de nombre). */
+  trimImages() {
+    for (const [key, e] of this.images) {
+      if (this.imageChars <= this.imageBudget || this.images.size <= 40) break;
+      this.images.delete(key); this.imageChars -= e.size;
+    }
   }
 
   styleFor(el, sig, win) {
@@ -269,16 +302,19 @@ export class FrameRenderer {
       this.dirty = false;
       // Les fonds placés derrière la carte ne doivent pas la recouvrir.
       const saved = [];
-      for (const sel of TRANSPARENT) for (const el of D.querySelectorAll(sel)) { saved.push([el, el.style.background]); el.style.background = 'transparent'; }
+      this.noteMutations(this.observer.takeRecords(), false);
+      this.tweaked = new Set();
+      for (const sel of TRANSPARENT) for (const el of D.querySelectorAll(sel)) { saved.push([el, el.style.background]); this.tweaked.add(el); el.style.background = 'transparent'; }
       try {
-        this.observer.takeRecords();
         const t0 = performance.now();
         this.overlay = await domToCanvas(this.context);
         this.overlayMs += performance.now() - t0; this.overlayRenders += 1;
         this.backup('goodOverlay', this.overlay);
       } finally {
         for (const [el, bg] of saved) el.style.background = bg;
-        this.observer.takeRecords();
+        // Ce qui a bougé pendant la photo : la carte le saura ; l'interface, comme avant, non.
+        this.noteMutations(this.observer.takeRecords(), false);
+        this.tweaked = null;
       }
     }
     this.ctx.drawImage(this.overlay, 0, 0, this.width, this.height);
@@ -297,7 +333,9 @@ export class FrameRenderer {
 
   async renderOne() {
     // Reprise : ces images sont déjà sur l'appareil ; le temps avance seulement.
-    if (this.frames < this.skip) { this.frames += 1; this.dirty = true; return; }
+    if (this.frames < this.skip) { this.frames += 1; this.dirty = true; this.mapDirty = true; return; }
+    // Plafond atteint : la vidéo est assez longue, on ne filme plus rien.
+    if (this.frames >= this.maxFrames) { if (!this.limited) { this.limited = true; this.onLimit?.(); } return; }
     // Une image ratée (page suspendue au mauvais moment) est refaite au retour.
     for (let attempt = 0; ; attempt++) {
       try { await this.drawFrame(); break; } catch (e) {
@@ -315,7 +353,8 @@ export class FrameRenderer {
       try { blob = await toJpeg(this.canvas, this.quality); } catch (e) {
         if (k >= 3) throw e;
         for (const c of [this.goodMap, this.goodOverlay]) if (c) { c.width = 0; c.height = 0; }
-        this.goodMap = this.goodOverlay = null;
+        this.goodMap = this.goodOverlay = null; this.mapDirty = true;
+        this.images.clear(); this.imageChars = 0;
         this.onWarn?.(`Image ${this.frames} — enregistrement refusé (${e.message}), nouvel essai`);
         await new Promise((r) => setTimeout(r, 300 * (k + 1)));
       }
@@ -333,15 +372,24 @@ export class FrameRenderer {
    * mieux qu'un rendu qui repart de zéro. Seul un échec qui dure (4 s) arrête.
    */
   async drawFrame() {
-    this.ctx.fillStyle = this.seaColor(); this.ctx.fillRect(0, 0, this.width, this.height);
     const t0 = performance.now();
-    try {
-      await this.drawMap();
-      this.backup('goodMap', this.canvas);
-      this.mapFails = 0;
-    } catch (e) {
-      this.trouble('carte', e, 'mapFails');
-      if (this.goodMap) this.ctx.drawImage(this.goodMap, 0, 0);
+    // Carte inchangée depuis l'image précédente : on reprend celle-ci telle quelle.
+    // Par sécurité, elle est tout de même redessinée toutes les 2 s.
+    if (this.goodMap && !this.mapDirty && this.mapAge < this.fps * 2 && !this.mapAnimating()) {
+      this.ctx.drawImage(this.goodMap, 0, 0); this.mapAge += 1;
+    } else {
+      this.ctx.fillStyle = this.seaColor(); this.ctx.fillRect(0, 0, this.width, this.height);
+      // Remis à zéro avant le dessin : un changement survenu pendant compte pour l'image suivante.
+      this.mapDirty = false; this.mapAge = 0;
+      try {
+        await this.drawMap();
+        this.backup('goodMap', this.canvas);
+        this.mapFails = 0; this.mapRenders += 1;
+      } catch (e) {
+        this.mapDirty = true;
+        this.trouble('carte', e, 'mapFails');
+        if (this.goodMap) this.ctx.drawImage(this.goodMap, 0, 0);
+      }
     }
     this.mapMs += performance.now() - t0;
     try {
@@ -354,6 +402,15 @@ export class FrameRenderer {
     }
     this.drawCaption();
     this.drawCursor();
+  }
+
+  /** Une animation CSS en cours sur la carte (repère qui pulse, fondu) : elle change sans toucher au DOM. */
+  mapAnimating() {
+    const svg = this.D.querySelector('svg.map'); if (!svg) return true;
+    return !!this.D.getAnimations?.().some((a) => {
+      const target = a.effect?.target; if (!target || !svg.contains(target)) return false;
+      const p = a.effect?.getComputedTiming().progress; return p != null;
+    });
   }
 
   /** Copie de secours d'un calque réussi (une seule toile par calque, réutilisée). */
@@ -473,7 +530,7 @@ export class FrameRenderer {
     this.release();
     const drawn = Math.max(1, this.frames - this.skip);
     return { frames: this.frames, thumb: this.thumb ? await this.thumb : null, bytes: this.bytes,
-      stats: { mapMs: this.mapMs / drawn, overlayMs: this.overlayMs / Math.max(1, this.overlayRenders), overlayRenders: this.overlayRenders } };
+      stats: { mapMs: this.mapMs / drawn, mapRenders: this.mapRenders, limited: !!this.limited, overlayMs: this.overlayMs / Math.max(1, this.overlayRenders), overlayRenders: this.overlayRenders } };
   }
 
   abort() { this.observer?.disconnect(); try { destroyContext(this.context); } catch { /* jamais créé */ } this.release(); }
@@ -481,7 +538,7 @@ export class FrameRenderer {
   /** Rend la mémoire des toiles tout de suite (Safari les garde sinon longtemps). */
   release() {
     for (const c of [this.canvas, this.overlayCanvas, this.goodMap, this.goodOverlay]) if (c) { c.width = 0; c.height = 0; }
-    this.images.clear(); this.styleCache.clear(); this.overlay = null;
+    this.images.clear(); this.imageChars = 0; this.styleCache.clear(); this.overlay = null;
   }
 }
 
