@@ -115,7 +115,7 @@ export class FrameRenderer {
     // parents a changé : thème, mode) : la sérialiser et la décoder à chaque
     // image saturait la mémoire de l'iPhone, qui rechargeait alors la page.
     this.observer = new this.iframe.contentWindow.MutationObserver((list) => this.noteMutations(list));
-    this.observer.observe(D.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+    this.observer.observe(D.documentElement, { subtree: true, childList: true, attributes: true, attributeOldValue: true, characterData: true });
     this.context = await createContext(D.documentElement, {
       width: D.documentElement.clientWidth, height: D.documentElement.clientHeight, scale: this.overlayScale,
       filter: (node) => this.keep(node),
@@ -138,7 +138,11 @@ export class FrameRenderer {
     for (const m of list) {
       // Les fonds rendus transparents le temps de la photo de l'interface : rien n'a changé.
       if (this.tweaked?.has(m.target) && m.type === 'attributes' && m.attributeName === 'style') continue;
-      const inMap = svg && svg.contains(m.target);
+      // Le site réécrit souvent un attribut avec la même valeur (classe, « hidden »,
+      // data-tiles à chaque tuile) : rien n'a changé à l'écran.
+      if (m.type === 'attributes' && m.target.getAttribute(m.attributeName) === m.oldValue) continue;
+      // Un repère de la carte retiré depuis (le site les recrée en se déplaçant) reste un changement de carte.
+      const inMap = svg && (svg.contains(m.target) || (!m.target.isConnected && m.target.namespaceURI === SVG_NS));
       if (!svg || inMap || m.target.contains?.(svg)) this.mapDirty = true;
       if (overlay && !inMap) this.dirty = true;
     }
@@ -172,6 +176,8 @@ export class FrameRenderer {
       return hit.data;
     }
     const entry = { size: 0 };
+    // Une image arrivée après le dessin de la carte : la carte est redessinée avec elle.
+    const arrived = (data) => { if (data && entry.missed) this.mapDirty = true; return data; };
     entry.data = (async () => {
       try {
         const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 6000);
@@ -180,8 +186,9 @@ export class FrameRenderer {
         if (!data) data = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(null); fr.readAsDataURL(blob); });
         if (data && this.images.get(url) === entry) { entry.size = data.length; this.imageChars += data.length; this.trimImages(); }
         return data;
-      } catch { this.images.delete(url); return null; }
-    })();
+        // Un échec reste noté (null) : la même tuile n'est pas redemandée à chaque image.
+      } catch { return null; }
+    })().then(arrived);
     this.images.set(url, entry);
     return entry.data;
   }
@@ -230,12 +237,20 @@ export class FrameRenderer {
     const root = `${D.documentElement.dataset.theme || ''}|${host.dataset.mode}|${host.className}|${D.documentElement.dataset.tiles || ''}`;
     // Images de la carte (fonds, portraits) : recopiées en data: d'abord, car un
     // SVG dessiné comme image ne peut rien charger lui-même.
+    // Une image lente (fond OpenStreetMap, portrait) ne retient pas l'image de
+    // la vidéo plus de 1,2 s : elle est dessinée sans, puis la carte est
+    // redessinée dès qu'elle arrive. Les tuiles que la page n'a pas encore
+    // affichées ne sont pas demandées.
     const hrefs = new Map();
+    const deadline = new Promise((r) => setTimeout(r, 1200, undefined));
     await Promise.all([...svg.querySelectorAll('image')].map(async (el) => {
       const href = el.getAttribute('href') || el.getAttributeNS(XLINK, 'href');
       if (!href) return;
       if (href.startsWith('data:')) { hrefs.set(el, href); return; }
-      const data = await this.inlineImage(new URL(href, D.baseURI).href, el.classList.contains('tile') ? 0 : 128);
+      if (el.classList.contains('tile') && !el.classList.contains('is-loaded')) return;
+      const url = new URL(href, D.baseURI).href;
+      const data = await Promise.race([this.inlineImage(url, el.classList.contains('tile') ? 0 : 128), deadline]);
+      if (data === undefined) { const e = this.images.get(url); if (e) e.missed = true; }
       hrefs.set(el, data || null);
     }));
     // Puis la carte est écrite en texte directement depuis la page, sans copie
