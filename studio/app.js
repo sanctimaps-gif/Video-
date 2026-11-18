@@ -608,7 +608,7 @@ async function processJob(job) {
     }
     if (saved === 'noplan') return;
     if (saved === 'unsaved') { toast("La vidéo est prête, mais le téléphone a refusé de la ranger dans la bibliothèque (place insuffisante ?). Enregistrez-la maintenant depuis le lecteur.", [], 0); return; }
-    if (saved) { notifyDone(saved); autoSave(saved.id); }
+    if (saved) notifyDone(saved);
     await keepAlive.ding(saved ? `Vidéo prête — « ${job.title} »` : 'Vidéo prête — à enregistrer');
   } catch (e) {
     activeRenderer?.abort(); clock.endRender();
@@ -913,64 +913,70 @@ function toast(text, actions = [], ms = 0, kind = null) {
   if (ms) toastTimer = setTimeout(() => { ui.toast.hidden = true; }, ms);
 }
 
-/** Vidéo terminée : un message discret, avec « Ouvrir » et « Enregistrer sur mon téléphone ». */
-function notifyDone(item) {
-  toast(`✅ Vidéo terminée : « ${item.title} ». Elle est rangée dans la bibliothèque.`, [
-    { label: '▶ Ouvrir', primary: true, run: async () => playItem(await library.get(item.id)) },
-    { label: 'Enregistrer sur mon téléphone', run: () => saveToDevice(item.id) },
-  ]);
-}
-
 /**
- * Enregistrement automatique d'une vidéo terminée, sans bouton à chercher.
- * Ordinateur : le téléchargement part tout seul. iPhone / iPad : Safari
- * n'ouvre « Enregistrer la vidéo » (Photos) qu'après un geste ; le premier
- * toucher n'importe où sur l'écran l'ouvre donc directement. Les vidéos encore
- * à enregistrer sont notées sur l'appareil : après un retour d'arrière-plan
- * ou un rechargement de la page, le premier toucher les enregistre aussi.
+ * Vidéo terminée : elle est déjà rangée dans la bibliothèque de l'application.
+ * Ordinateur : le fichier est aussi téléchargé tout seul. iPhone / iPad :
+ * Safari n'ouvre « Enregistrer la vidéo » (Photos) qu'après un toucher, donc un
+ * bouton « 📲 Enregistrer sur mon téléphone » le fait, ici et dans la
+ * bibliothèque. Les vidéos pas encore mises sur le téléphone sont notées sur
+ * l'appareil, et marquées dans la bibliothèque.
  */
 const TO_SAVE = 'sanctimaps-studio.a-enregistrer';
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 function pendingSaves() { try { return JSON.parse(localStorage.getItem(TO_SAVE) || '[]'); } catch { return []; } }
 function setPendingSaves(ids) { try { localStorage.setItem(TO_SAVE, JSON.stringify([...new Set(ids)])); } catch { /* sans stockage */ } }
-let armedSave = null;
-async function autoSave(id) {
-  if (id) setPendingSaves([...pendingSaves(), id]);
-  const ids = pendingSaves();
-  if (!ids.length) return;
-  const items = (await Promise.all(ids.map((i) => library.get(i).catch(() => null)))).filter((it) => it?.blob);
-  setPendingSaves(items.map((it) => it.id));
-  if (!items.length) return;
-  const files = items.map((it) => new File([it.blob], fileName(it), { type: it.blob.type || 'video/mp4' }));
-  if (!IOS || !navigator.canShare?.({ files })) {
-    // Téléchargement direct, une vidéo après l'autre.
-    for (const [k, it] of items.entries()) {
-      const a = document.createElement('a'); a.href = URL.createObjectURL(it.blob); a.download = files[k].name;
-      document.body.append(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-      log(`Vidéo enregistrée automatiquement : ${files[k].name} (dossier Téléchargements).`);
-    }
-    setPendingSaves([]);
+function markSaved(id) { setPendingSaves(pendingSaves().filter((i) => i !== id)); renderLibrary(); }
+/** Les vidéos de la bibliothèque déjà lues : le partage part sans attente, dans le toucher. */
+const known = new Map();
+
+function notifyDone(item) {
+  known.set(item.id, item);
+  if (!IOS) {
+    // Ordinateur : téléchargement direct, sans rien demander.
+    const a = document.createElement('a'); a.href = URL.createObjectURL(item.blob); a.download = fileName(item);
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    log(`Vidéo enregistrée automatiquement : ${a.download} (dossier Téléchargements).`);
+    toast(`✅ Vidéo terminée : « ${item.title} ». Elle est dans la bibliothèque et dans vos téléchargements.`, [
+      { label: '▶ Ouvrir', primary: true, run: async () => playItem(await library.get(item.id)) },
+    ]);
     return;
   }
-  // iPhone : le prochain toucher ouvre la feuille d'enregistrement (fichiers déjà prêts).
-  if (armedSave) document.removeEventListener('click', armedSave, true);
-  armedSave = () => {
-    document.removeEventListener('click', armedSave, true); armedSave = null;
-    navigator.share({ files, title: items.length > 1 ? 'Vidéos SanctiMaps' : items[0].title })
-      .then(() => { setPendingSaves(pendingSaves().filter((i) => !items.some((it) => it.id === i))); log(`Vidéo enregistrée : « ${items.map((it) => it.title).join(' », « ')} ».`); })
-      .catch(() => { log("Enregistrement annulé : la vidéo reste dans la bibliothèque (le prochain toucher le reproposera)."); setTimeout(() => autoSave(), 500); });
-  };
-  document.addEventListener('click', armedSave, true);
-  toast(`✅ « ${items.length > 1 ? `${items.length} vidéos` : items[0].title} » terminée${items.length > 1 ? 's' : ''}. Touchez l'écran n'importe où : choisissez « Enregistrer la vidéo » pour la mettre dans Photos.`, [], 0, 'save');
+  setPendingSaves([...pendingSaves(), item.id]);
+  renderLibrary();
+  toast(`✅ Vidéo terminée : « ${item.title} ». Elle est enregistrée dans l'application (bibliothèque).`, [
+    { label: '📲 Enregistrer sur mon téléphone', primary: true, run: () => saveToDevice(item.id) },
+    { label: '▶ Ouvrir', run: async () => playItem(await library.get(item.id)) },
+  ]);
+}
+
+/** Au retour dans l'application : rappelle les vidéos pas encore mises sur le téléphone. */
+async function remindPendingSaves() {
+  if (!IOS) return;
+  const items = (await Promise.all(pendingSaves().map((i) => library.get(i).catch(() => null)))).filter((it) => it?.blob);
+  setPendingSaves(items.map((it) => it.id));
+  if (!items.length) return;
+  for (const it of items) known.set(it.id, it);
+  const last = items[items.length - 1];
+  toast(`${items.length > 1 ? `${items.length} vidéos terminées sont` : `« ${last.title} » est`} dans l'application, pas encore sur le téléphone.`, [
+    { label: '📲 Enregistrer sur mon téléphone', primary: true, run: () => saveToDevice(last.id) },
+  ]);
 }
 
 /** Enregistrer sur l'appareil : feuille de partage (iPhone : « Enregistrer la vidéo »), sinon téléchargement. */
 async function saveToDevice(id) {
-  const full = await library.get(id);
+  // La vidéo déjà connue est partagée tout de suite, sans attente : Safari
+  // n'ouvre la feuille de partage que pendant le toucher.
+  const full = known.get(id)?.blob ? known.get(id) : await library.get(id);
   const file = new File([full.blob], fileName(full), { type: full.blob.type || 'video/mp4' });
-  if (navigator.canShare?.({ files: [file] })) navigator.share({ files: [file], title: full.title }).catch(() => {});
-  else { const a = document.createElement('a'); a.href = URL.createObjectURL(full.blob); a.download = fileName(full); a.click(); }
+  if (navigator.canShare?.({ files: [file] })) {
+    navigator.share({ files: [file], title: full.title })
+      .then(() => { markSaved(id); log(`« ${full.title} » envoyée vers le téléphone.`); })
+      .catch(() => {});
+  } else {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(full.blob); a.download = fileName(full); a.click();
+    markSaved(id);
+  }
 }
 
 ui.progressPause.addEventListener('click', pauseCurrent);
@@ -1110,14 +1116,16 @@ async function renderLibrary() {
       + (persisted ? ' · conservation garantie' : '')
     : 'Aucune vidéo pour l’instant : chaque vidéo enregistrée viendra se ranger ici.';
   ui.libList.replaceChildren();
+  const pending = new Set(pendingSaves());
   for (const item of items) {
+    known.set(item.id, item);
     const li = document.createElement('li'); li.className = `lib-item${item.id === newestId ? ' is-new' : ''}`; li.dataset.id = item.id;
     const d = new Date(item.created);
     li.innerHTML = `<button class="lib-thumb" aria-label="Lire"><img alt=""><span class="lib-dur"></span></button>
       <div class="lib-info"><p class="lib-title"></p><p class="lib-meta"></p>
         <div class="lib-actions">
           <button class="mini" data-do="play">▶ Lire</button>
-          <button class="mini primary" data-do="share">Enregistrer / partager</button>
+          <button class="mini primary" data-do="share">${IOS ? '📲 Enregistrer sur mon téléphone' : 'Enregistrer / partager'}</button>
           <button class="mini" data-do="rename">Renommer</button>
           ${item.scenario ? '<button class="mini" data-do="reuse">✏️ Modifier le scénario</button><button class="mini" data-do="regen">🔁 Regénérer</button>' : ''}
           <button class="mini del" data-do="delete">Supprimer</button>
@@ -1128,7 +1136,7 @@ async function renderLibrary() {
     li.querySelector('.lib-dur').textContent = `${Math.round(item.seconds || 0)} s`;
     li.querySelector('.lib-title').textContent = item.title;
     if (item.id === newestId) li.querySelector('.lib-title').insertAdjacentHTML('afterbegin', '<span class="lib-new">Nouvelle</span> ');
-    li.querySelector('.lib-title').insertAdjacentHTML('beforeend', ' <span class="lib-done">✓ Terminée</span>');
+    li.querySelector('.lib-title').insertAdjacentHTML('beforeend', ` <span class="lib-done">✓ Terminée</span>${pending.has(item.id) ? ' <span class="lib-pending">Pas encore sur le téléphone</span>' : ''}`);
     li.querySelector('.lib-meta').textContent = `${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} · ${item.aspect || ''} · ${((item.size || 0) / 1e6).toFixed(1)} Mo`;
     li.addEventListener('click', async (e) => {
       const what = e.target.closest('[data-do]')?.dataset.do || (e.target.closest('.lib-thumb') ? 'play' : null);
@@ -1660,8 +1668,8 @@ ui.recHint.textContent = canRender()
 
 restore();
 renderLibrary();
-// Une vidéo terminée pendant une absence (arrière-plan, page rechargée) s'enregistre au premier toucher.
-autoSave();
+// Une vidéo terminée pendant une absence (page rechargée) : le bouton pour la mettre sur le téléphone.
+remindPendingSaves();
 autoResume().then(() => {
   if (ui.resume.hidden && !resumedAutomatically) return;
   // Le rendu a été coupé : on montre ce que le journal disait juste avant.

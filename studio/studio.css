@@ -165,6 +165,7 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .task-list .task-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .task-list li.is-failed .task-state { color: var(--bad); }
 .lib-done { color: var(--ok); font-size: .74rem; font-weight: 600; }
+.lib-pending { color: var(--accent); font-size: .74rem; font-weight: 600; }
 .toast .toast-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .toast .toast-actions button { padding: 7px 12px; font-size: .85rem; background: rgba(255,255,255,.14); color: #fff; border-color: rgba(255,255,255,.25); }
 .toast .toast-actions button.primary { background: #fff; color: #022254; }
