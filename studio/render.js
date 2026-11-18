@@ -565,6 +565,10 @@ export class FrameRenderer {
  */
 export async function encodeJob(library, job, onProgress = () => {}) {
   const { width, height, fps } = job; const n = job.frames;
+  // Vidéo filmée plus longue que la durée demandée : une image sur k est
+  // gardée (accéléré régulier), pour durer exactement ce qui a été demandé.
+  const out = job.target ? Math.max(1, Math.min(n, Math.round(job.target * fps))) : n;
+  const source = (k) => Math.min(n - 1, Math.floor(k * n / out));
   const picked = await pickCodec(width, height, fps);
   if (!picked) throw new Error("ce navigateur ne sait pas encoder de vidéo");
   // Le son (musique composée, voix off) : calculé à la durée exacte des images.
@@ -573,7 +577,7 @@ export async function encodeJob(library, job, onProgress = () => {}) {
     aconf = await audioConfig();
     if (!aconf) soundNote = 'ce navigateur ne sait pas encoder le son : vidéo muette';
     else {
-      try { sound = await soundtrack(n / fps, { music: !!job.music, voiceBlob: job.voice || null, sampleRate: aconf.sampleRate }); }
+      try { sound = await soundtrack(out / fps, { music: !!job.music, voiceBlob: job.voice || null, sampleRate: aconf.sampleRate }); }
       catch (e) { soundNote = `son non calculé (${e.message}) : vidéo muette`; sound = null; }
     }
   }
@@ -585,22 +589,21 @@ export async function encodeJob(library, job, onProgress = () => {}) {
   encoder.configure(picked.config);
   let last = null;
   try {
-    for (let from = 0; from < n; from += 30) {
-      const blobs = await library.frames(job.id, from, Math.min(n, from + 30));
-      for (let k = 0; k < blobs.length; k++) {
-        if (failure) throw failure;
-        const i = from + k;
-        // Une image manquante (page fermée entre deux rangements) : on répète la précédente.
-        if (blobs[k]) { last?.close(); last = await createImageBitmap(blobs[k]); }
-        if (!last) continue;
-        const frame = new VideoFrame(last, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
-        encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
-        frame.close();
-        while (encoder.encodeQueueSize > 4 && !failure) {
-          await new Promise((r) => { encoder.addEventListener?.('dequeue', r, { once: true }); setTimeout(r, 50); });
-        }
-        if (i % 15 === 0) onProgress(i, n);
+    let from = -1, blobs = [], shown = -1;
+    for (let i = 0; i < out; i++) {
+      if (failure) throw failure;
+      const src = source(i);
+      if (src >= from + blobs.length || src < from) { from = src; blobs = await library.frames(job.id, from, Math.min(n, from + 30)); }
+      // Une image manquante (page fermée entre deux rangements) : on répète la précédente.
+      if (src !== shown && blobs[src - from]) { last?.close(); last = await createImageBitmap(blobs[src - from]); shown = src; }
+      if (!last) continue;
+      const frame = new VideoFrame(last, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+      encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+      frame.close();
+      while (encoder.encodeQueueSize > 4 && !failure) {
+        await new Promise((r) => { encoder.addEventListener?.('dequeue', r, { once: true }); setTimeout(r, 50); });
       }
+      if (i % 15 === 0) onProgress(i, out);
     }
     await encoder.flush();
     if (failure) throw failure;
@@ -612,7 +615,7 @@ export async function encodeJob(library, job, onProgress = () => {}) {
     last?.close();
     try { encoder.close(); } catch { /* déjà fermé */ }
   }
-  onProgress(n, n);
-  return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: n / fps, codec: picked.mux,
+  onProgress(out, out);
+  return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: out / fps, codec: picked.mux,
     sound: sound ? [job.music && 'musique', job.voice && 'voix off'].filter(Boolean).join(' + ') : '', soundNote };
 }

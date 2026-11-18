@@ -726,13 +726,31 @@ export class Realisateur {
    */
   retime(sc, actual) {
     const target = sc.target || total(sc);
+    // Vidéo courte (≤ 15 s) : lecture et titres plus brefs, pour tenir la durée demandée.
+    const short = target <= 15;
     const floor = (s) => {
       const real = actual[s.id];
-      if (['show_profile', 'hold'].includes(s.action) || real == null) return s.action === 'show_profile' ? Math.min(s.duration, Math.max(4, (s.minimum || 5) * 0.8)) : Math.min(s.duration, 1.5);
+      if (['show_profile', 'hold'].includes(s.action) || real == null) return s.action === 'show_profile' ? Math.min(s.duration, Math.max(short ? 2.5 : 4, (s.minimum || 5) * (short ? 0.5 : 0.8))) : Math.min(s.duration, short ? 1 : 1.5);
       // Une scène titrée reste à l'écran le temps de lire son titre.
-      return Math.max(real + 0.25, s.caption?.title && sc.captions !== false ? Math.min(s.duration, 2.5) : 0);
+      return Math.max(real + 0.25, s.caption?.title && sc.captions !== false ? Math.min(s.duration, short ? 1.5 : 2.5) : 0);
     };
-    const mins = sc.shots.map(floor);
+    let mins = sc.shots.map(floor);
+    // Même au plus court, trop long : les scènes facultatives partent (en partant
+    // de la fin), jamais l'introduction, la fiche ni la conclusion.
+    const dropped = [];
+    for (;;) {
+      const need = mins.reduce((a, b) => a + b, 0);
+      if (need <= target + 0.05) break;
+      const i = sc.shots.map((x, k) => [x, k]).reverse()
+        .find(([x, k]) => k > 0 && k < sc.shots.length - 1 && x.action !== 'show_profile' && (x.priority ?? 2) >= 2)?.[0];
+      const j = i ? sc.shots.indexOf(i) : sc.shots.map((x, k) => [x, k]).reverse()
+        .find(([x, k]) => k > 0 && k < sc.shots.length - 1 && !['show_profile', 'open_saint', 'open_country'].includes(x.action) && (x.priority ?? 2) >= 1 && !/introduction|conclusion/i.test(x.purpose || ''))?.[1];
+      if (j == null || sc.shots.length <= 3) break;
+      dropped.push(sc.shots[j].label);
+      sc.shots.splice(j, 1); mins.splice(j, 1);
+    }
+    if (dropped.length) sc.notes = [...(sc.notes || []), `Retiré pour tenir ${target} s : ${dropped.join(', ')}.`];
+    mins = sc.shots.map(floor);
     sc.shots.forEach((s, i) => { if (s.duration < mins[i]) s.duration = +mins[i].toFixed(1); });
     let excess = total(sc) - target;
     const longer = sc.shots.filter((s, i) => s.duration > mins[i] + 0.05);

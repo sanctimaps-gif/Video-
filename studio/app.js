@@ -657,6 +657,16 @@ async function renderJob(job) {
       log(`Vidéo « ${job.title} » : préparation des scènes.`);
       await loadStage(job.aspect, scn.style);
       if (!(await rehearse(scn))) { log('Aucune scène réalisable.'); await library.dropJob(job.id).catch(() => {}); return 'noplan'; }
+      // Plus long que demandé (les mouvements réels de la carte prennent du
+      // temps) : la caméra est accélérée et la répétition rejouée, deux fois au plus.
+      for (let pass = 0; pass < 2 && scn.target && total(scn) > scn.target + 0.3; pass++) {
+        const before = scn.speed || 1, next = Math.min(4, before * (total(scn) / scn.target) * 1.1);
+        if (next < before * 1.05) break;
+        scn.speed = +next.toFixed(3);
+        log(`${total(scn).toFixed(1)} s pour ${scn.target} s demandées : caméra accélérée (×${scn.speed.toFixed(2)}), nouvelle répétition.`);
+        await loadStage(job.aspect, scn.style);
+        if (!(await rehearse(scn))) { log('Aucune scène réalisable.'); await library.dropJob(job.id).catch(() => {}); return 'noplan'; }
+      }
       job.scenario = scn;
     }
     await loadStage(job.aspect, scn.style);
@@ -669,6 +679,7 @@ async function renderJob(job) {
     if (job.light) log(`« ${job.title} » : mode allégé (moins de mémoire).`);
     // Plafond : la durée prévue, plus un quart et 5 s de marge. Au-delà, le
     // scénario s'arrête et la vidéo se termine, au lieu de tourner sans fin.
+    // Garde-fou seulement : la durée demandée est tenue à l'assemblage (accéléré si besoin).
     const maxFrames = Math.round((expected * 1.25 + 5) * 30);
     const renderer = activeRenderer = new FrameRenderer(iframe, { width: w, height: h, fps: 30, skip: job.framesDone, thumbAt: job.thumb ? -1 : job.thumbAt, light: !!job.light, maxFrames,
       store: async (batch, thumb, done) => {
@@ -727,6 +738,9 @@ async function renderJob(job) {
     }
     const done = await renderer.finish();
     job.frames = done.frames; job.framesDone = done.frames; job.status = 'encoding'; job.updated = Date.now();
+    // La durée demandée : la vidéo filmée plus longue sera accélérée à l'assemblage pour y tenir exactement.
+    job.target = scn.target || null;
+    if (job.target && done.frames / 30 > job.target + 0.1) log(`Filmé : ${(done.frames / 30).toFixed(1)} s ; la vidéo est accélérée (×${(done.frames / 30 / job.target).toFixed(2)}) pour durer ${job.target} s, sans couper de scène.`);
     if (done.thumb && !job.thumb) job.thumb = done.thumb;
     await library.saveJob(job);
     log(`Images rendues : ${(done.frames / 30).toFixed(1)} s, ${w}×${h}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte redessinée ${done.stats.mapRenders}×, ${done.stats.mapMs.toFixed(0)} ms/image, interface ${done.stats.overlayRenders}× ${done.stats.overlayMs.toFixed(0)} ms, ${(done.bytes / 1e6).toFixed(0)} Mo d'images).`);
