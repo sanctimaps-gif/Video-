@@ -608,7 +608,7 @@ async function processJob(job) {
     }
     if (saved === 'noplan') return;
     if (saved === 'unsaved') { toast("La vidéo est prête, mais le téléphone a refusé de la ranger dans la bibliothèque (place insuffisante ?). Enregistrez-la maintenant depuis le lecteur.", [], 0); return; }
-    if (saved) notifyDone(saved);
+    if (saved) { notifyDone(saved); autoSave(saved.id); }
     await keepAlive.ding(saved ? `Vidéo prête — « ${job.title} »` : 'Vidéo prête — à enregistrer');
   } catch (e) {
     activeRenderer?.abort(); clock.endRender();
@@ -919,6 +919,50 @@ function notifyDone(item) {
     { label: '▶ Ouvrir', primary: true, run: async () => playItem(await library.get(item.id)) },
     { label: 'Enregistrer sur mon téléphone', run: () => saveToDevice(item.id) },
   ]);
+}
+
+/**
+ * Enregistrement automatique d'une vidéo terminée, sans bouton à chercher.
+ * Ordinateur : le téléchargement part tout seul. iPhone / iPad : Safari
+ * n'ouvre « Enregistrer la vidéo » (Photos) qu'après un geste ; le premier
+ * toucher n'importe où sur l'écran l'ouvre donc directement. Les vidéos encore
+ * à enregistrer sont notées sur l'appareil : après un retour d'arrière-plan
+ * ou un rechargement de la page, le premier toucher les enregistre aussi.
+ */
+const TO_SAVE = 'sanctimaps-studio.a-enregistrer';
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+function pendingSaves() { try { return JSON.parse(localStorage.getItem(TO_SAVE) || '[]'); } catch { return []; } }
+function setPendingSaves(ids) { try { localStorage.setItem(TO_SAVE, JSON.stringify([...new Set(ids)])); } catch { /* sans stockage */ } }
+let armedSave = null;
+async function autoSave(id) {
+  if (id) setPendingSaves([...pendingSaves(), id]);
+  const ids = pendingSaves();
+  if (!ids.length) return;
+  const items = (await Promise.all(ids.map((i) => library.get(i).catch(() => null)))).filter((it) => it?.blob);
+  setPendingSaves(items.map((it) => it.id));
+  if (!items.length) return;
+  const files = items.map((it) => new File([it.blob], fileName(it), { type: it.blob.type || 'video/mp4' }));
+  if (!IOS || !navigator.canShare?.({ files })) {
+    // Téléchargement direct, une vidéo après l'autre.
+    for (const [k, it] of items.entries()) {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(it.blob); a.download = files[k].name;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      log(`Vidéo enregistrée automatiquement : ${files[k].name} (dossier Téléchargements).`);
+    }
+    setPendingSaves([]);
+    return;
+  }
+  // iPhone : le prochain toucher ouvre la feuille d'enregistrement (fichiers déjà prêts).
+  if (armedSave) document.removeEventListener('click', armedSave, true);
+  armedSave = () => {
+    document.removeEventListener('click', armedSave, true); armedSave = null;
+    navigator.share({ files, title: items.length > 1 ? 'Vidéos SanctiMaps' : items[0].title })
+      .then(() => { setPendingSaves(pendingSaves().filter((i) => !items.some((it) => it.id === i))); log(`Vidéo enregistrée : « ${items.map((it) => it.title).join(' », « ')} ».`); })
+      .catch(() => { log("Enregistrement annulé : la vidéo reste dans la bibliothèque (le prochain toucher le reproposera)."); setTimeout(() => autoSave(), 500); });
+  };
+  document.addEventListener('click', armedSave, true);
+  toast(`✅ « ${items.length > 1 ? `${items.length} vidéos` : items[0].title} » terminée${items.length > 1 ? 's' : ''}. Touchez l'écran n'importe où : choisissez « Enregistrer la vidéo » pour la mettre dans Photos.`, [], 0, 'save');
 }
 
 /** Enregistrer sur l'appareil : feuille de partage (iPhone : « Enregistrer la vidéo »), sinon téléchargement. */
@@ -1616,6 +1660,8 @@ ui.recHint.textContent = canRender()
 
 restore();
 renderLibrary();
+// Une vidéo terminée pendant une absence (arrière-plan, page rechargée) s'enregistre au premier toucher.
+autoSave();
 autoResume().then(() => {
   if (ui.resume.hidden && !resumedAutomatically) return;
   // Le rendu a été coupé : on montre ce que le journal disait juste avant.
