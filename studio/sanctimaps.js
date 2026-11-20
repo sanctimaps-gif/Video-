@@ -5,11 +5,17 @@
 export const TRANSITION_MS = 720;
 const WHEEL_COEF = 0.0015;
 
+// Noms des continents dans toutes les langues du site (son fil d'Ariane suit la
+// langue du téléphone), plus quelques façons courantes de les dire en français.
 export const CONTINENTS = {
-  europe: ['europe'], africa: ['afrique', 'africa'], asia: ['asie', 'asia', 'moyen orient', 'proche orient'],
-  'north-america': ['amerique du nord', 'north america', 'amerique centrale'],
-  'south-america': ['amerique du sud', 'amerique latine', 'south america'],
-  oceania: ['oceanie', 'oceania'],
+  europe: ['europe', 'europa', 'европа', 'أوروبا', '欧洲'],
+  africa: ['afrique', 'africa', 'afrika', 'afryka', 'африка', 'أفريقيا', '非洲'],
+  asia: ['asie', 'asia', 'asien', 'azie', 'azja', 'азия', 'آسيا', '亚洲', 'moyen orient', 'proche orient'],
+  'north-america': ['amerique du nord', 'north america', 'amerique centrale', 'nordamerika', 'america del norte', 'america settentrionale',
+    'america septentrionalis', 'noord amerika', 'ameryka połnocna', 'america do norte', 'северная америка', 'أمريكا الشمالية', '北美洲'],
+  'south-america': ['amerique du sud', 'amerique latine', 'south america', 'sudamerika', 'america del sur', 'america meridionale',
+    'america meridionalis', 'zuid amerika', 'ameryka południowa', 'america do sul', 'южная америка', 'أمريكا الجنوبية', '南美洲'],
+  oceania: ['oceanie', 'oceania', 'ozeanien', 'океания', 'أوقيانوسيا', '大洋洲'],
 };
 export const CONTINENT_LABEL = {
   europe: "l'Europe", africa: "l'Afrique", asia: "l'Asie", oceania: "l'Océanie",
@@ -618,7 +624,9 @@ export class SanctiMaps {
     const country = this.data.countryById.get(iso); const label = this.data.countryName(iso);
     let s = this.snapshot();
     if (s.ficheOpen) { await this.closeProfile(); s = this.snapshot(); }
-    if (s.mode === 'country' && s.trail[2] === label) { this.memory.country = iso; return new Report('pays', true, `déjà sur ${label}`); }
+    // Le fil d'Ariane est dans la langue du site (« Hungary » sur un téléphone en anglais) : on compare les pays, pas les noms.
+    const here = (st) => st.mode === 'country' && !!st.trail[2] && (st.trail[2] === label || this.data.findCountry(st.trail[2]) === iso);
+    if (here(s)) { this.memory.country = iso; return new Report('pays', true, `déjà sur ${label}`); }
     if (!(s.mode === 'continent' && this.continentOfTrail(s) === country.continent)) {
       const r = await this.goContinent(country.continent);
       if (!r.ok) return new Report('pays', false, `continent non atteint : ${r.detail}`);
@@ -634,7 +642,7 @@ export class SanctiMaps {
     await this.point(point);
     await this.transition(() => this.tap(...point));
     s = this.snapshot();
-    const ok = s.mode === 'country' && s.trail[2] === label;
+    const ok = here(s);
     if (ok) Object.assign(this.memory, { country: iso, continent: country.continent, place: null });
     return new Report('pays', ok, `${s.trail.join(' › ')}${s.hint ? ' — ' + s.hint : ''}`);
   }
