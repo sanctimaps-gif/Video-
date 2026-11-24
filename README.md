@@ -36,6 +36,24 @@ français, ajout, suppression) ; **🤖 Génération automatique** génère puis
 C'est un moteur de règles de réalisation qui tourne sur l'appareil, sans serveur ni modèle de
 langage : il n'invente ni commande, ni lieu, ni fait.
 
+**La voix off IA.** Chaque vidéo est racontée par une voix de conteur (ElevenLabs, par exemple
+« Christian Page – Storyteller ») : case **Voix off IA sur chaque vidéo**, cochée par défaut. Le narrateur
+(`studio/narrateur.js`) écrit le texte à partir des seules données du site (fiche, dates, lieux et leurs
+anecdotes, patronages) : une **accroche** dès la première seconde (âge, énigme, flash-back, date, question…),
+l'**histoire** scène après scène, puis une **fin** qui invite à aller sur SanctiMaps. Une graine différente à
+chaque génération change l'accroche, les tournures, l'ordre du parcours et la conclusion, et évite les
+accroches des dernières vidéos. La demande passe avant le hasard : ton (« mystérieuse », « épique »,
+« émouvante »…), type d'accroche (« commence par une question »), texte exact (« La voix off dit : « … » »),
+ou « sans voix off ». Le texte de chaque scène s'affiche dans le storyboard et se modifie (✎) ;
+**🔊 Écouter la voix off** le fait lire avant le tournage ; **✨ Améliorer** le réécrit autrement.
+Réglages (**🎙️ Réglages de la voix off IA**) : l'ID de la voix (« ⋮ → Copier l'ID de voix » sur ElevenLabs,
+après l'avoir ajoutée à « Mes voix ») et une clé API ElevenLabs ; ils restent sur l'appareil et ne sont
+envoyés qu'à ElevenLabs (`studio/voix.js`). Avant le tournage, chaque phrase est lue (avec ses voisines,
+pour une intonation continue), les scènes s'allongent au besoin pour qu'elle ait le temps d'être dite, et
+elle est posée dans le MP4 à l'instant exact où sa scène commence, la musique baissant sous la voix.
+Sans réglage ou en cas d'erreur (clé refusée, crédits épuisés), la vidéo se fait sans voix off et le
+journal dit pourquoi. Les vidéos sont **dynamiques par défaut** (le but : donner envie d'aller sur le site).
+
 **Le son.** La case **Musique d'ambiance** ajoute au MP4 une musique douce composée sur l'appareil
 (accords tenus, notes de cloche, écho ; `studio/son.js`), à la durée exacte de la vidéo, avec entrée et
 sortie en fondu : rien n'est téléchargé, aucun droit d'auteur. **🎙️ Enregistrer la voix off** ouvre un

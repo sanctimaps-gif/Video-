@@ -11,7 +11,7 @@
 // assemblé à la fin à partir de ces images, par ``encodeJob``.
 import { createContext, destroyContext, domToCanvas } from './vendor/modern-screenshot.mjs';
 import { ArrayBufferTarget, Muxer } from './vendor/mp4-muxer.mjs';
-import { audioConfig, encodeAudio, soundtrack } from './son.js';
+import { audioConfig, encodeAudio, placeClips, soundtrack } from './son.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK = 'http://www.w3.org/1999/xlink';
@@ -567,20 +567,31 @@ export async function encodeJob(library, job, onProgress = () => {}) {
   const { width, height, fps } = job; const n = job.frames;
   // Vidéo filmée plus longue que la durée demandée : une image sur k est
   // gardée (accéléré régulier), pour durer exactement ce qui a été demandé.
-  const out = job.target ? Math.max(1, Math.min(n, Math.round(job.target * fps))) : n;
-  const source = (k) => Math.min(n - 1, Math.floor(k * n / out));
+  // Avec une voix off IA, jamais d'accéléré : la voix donne le rythme.
+  const clips = (job.voiceClips || []).filter((c) => c.blob);
+  let out = job.target && !clips.length ? Math.max(1, Math.min(n, Math.round(job.target * fps))) : n;
   const picked = await pickCodec(width, height, fps);
   if (!picked) throw new Error("ce navigateur ne sait pas encoder de vidéo");
   // Le son (musique composée, voix off) : calculé à la durée exacte des images.
   let sound = null, aconf = null, soundNote = '';
-  if (job.music || job.voice) {
+  if (job.music || job.voice || clips.length) {
     aconf = await audioConfig();
     if (!aconf) soundNote = 'ce navigateur ne sait pas encoder le son : vidéo muette';
     else {
-      try { sound = await soundtrack(out / fps, { music: !!job.music, voiceBlob: job.voice || null, sampleRate: aconf.sampleRate }); }
-      catch (e) { soundNote = `son non calculé (${e.message}) : vidéo muette`; sound = null; }
+      try {
+        let placed = null;
+        if (clips.length) {
+          // Chaque phrase au moment où sa scène commence dans la vidéo.
+          placed = await placeClips(clips.map((c) => ({ blob: c.blob, start: (job.shotStarts?.[c.id] ?? 0) / fps })), aconf.sampleRate);
+          // La voix finit après la dernière image : celle-ci reste à l'écran jusqu'à la fin de la phrase.
+          out = Math.max(out, Math.ceil((placed.end + 0.6) * fps));
+        }
+        sound = await soundtrack(out / fps, { music: !!job.music, voiceBlob: clips.length ? null : job.voice || null, voice: placed?.voice || null, sampleRate: aconf.sampleRate });
+      } catch (e) { soundNote = `son non calculé (${e.message}) : vidéo muette`; sound = null; }
     }
   }
+  // Accéléré : une image sur k ; voix plus longue que les images : la dernière image est répétée.
+  const source = (k) => (out < n ? Math.floor(k * n / out) : Math.min(n - 1, k));
   const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: picked.mux, width, height, frameRate: fps },
     ...(sound ? { audio: { codec: aconf.mux, numberOfChannels: 2, sampleRate: aconf.sampleRate } } : {}),
     fastStart: 'in-memory' });
@@ -617,5 +628,5 @@ export async function encodeJob(library, job, onProgress = () => {}) {
   }
   onProgress(out, out);
   return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', type: 'video/mp4', seconds: out / fps, codec: picked.mux,
-    sound: sound ? [job.music && 'musique', job.voice && 'voix off'].filter(Boolean).join(' + ') : '', soundNote };
+    sound: sound ? [job.music && 'musique', clips.length ? 'voix off IA' : job.voice && 'voix off'].filter(Boolean).join(' + ') : '', soundNote };
 }

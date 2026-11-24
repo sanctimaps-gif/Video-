@@ -199,3 +199,13 @@ body.shooting .stage-wrap { border-radius: 0; height: 100dvh; }
 .prompter-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .prompter-bar span { display: block; height: 100%; width: 0; background: #b3263a; transition: width 100ms linear; }
 .prompter audio { width: 100%; }
+
+/* Voix off IA */
+.voice-setup { margin-top: 10px; border: 1px solid var(--line, #e3d6c2); border-radius: 12px; padding: 8px 12px; }
+.voice-setup summary { cursor: pointer; font-weight: 600; font-size: .9rem; }
+.voice-setup ol.hint { padding-left: 1.2em; }
+.voice-setup .field { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: .85rem; }
+.voice-setup .field input { width: 100%; box-sizing: border-box; }
+#el-badge { font-weight: 400; color: var(--muted); }
+.timeline .scene-voice { grid-column: 2 / 4; display: block; font-size: .82rem; color: var(--ink, inherit); font-style: italic; margin-top: 2px; }
+.timeline .scene-voice button { font-style: normal; margin-left: 6px; }

@@ -163,9 +163,32 @@ export async function encodeAudio(muxer, pcm, config) {
   } finally { try { encoder.close(); } catch { /* déjà fermé */ } }
 }
 
+/**
+ * La voix off IA : chaque phrase posée au moment où sa scène commence dans la
+ * vidéo (``start``, en secondes). Une phrase qui déborde décale la suivante
+ * (jamais deux voix en même temps). Rend ``{ voice, end }`` : une piste mono
+ * utilisable par ``mix``, et l'instant où la voix se tait.
+ */
+export async function placeClips(clips, sampleRate = RATE) {
+  const decoded = [];
+  for (const c of clips) {
+    try { decoded.push({ start: c.start, buf: await decodeVoice(c.blob, sampleRate) }); } catch { /* phrase illisible : sautée */ }
+  }
+  decoded.sort((a, b) => a.start - b.start);
+  let t = 0; const placed = [];
+  for (const d of decoded) {
+    const at = Math.max(d.start, t ? t + 0.12 : 0);
+    placed.push({ at, data: d.buf.getChannelData(0) });
+    t = at + d.buf.duration;
+  }
+  const data = new Float32Array(Math.ceil((t + 0.05) * sampleRate));
+  for (const p of placed) data.set(p.data.subarray(0, Math.max(0, data.length - Math.round(p.at * sampleRate))), Math.round(p.at * sampleRate));
+  return { voice: { numberOfChannels: 1, getChannelData: () => data }, end: t };
+}
+
 /** Le son d'une vidéo de ``seconds`` secondes, prêt à encoder ; ``null`` s'il n'y en a pas. */
-export async function soundtrack(seconds, { music = false, voiceBlob = null, sampleRate = RATE } = {}) {
-  if (!music && !voiceBlob) return null;
-  const [m, v] = await Promise.all([music ? composeMusic(seconds, sampleRate) : null, voiceBlob ? decodeVoice(voiceBlob, sampleRate) : null]);
+export async function soundtrack(seconds, { music = false, voiceBlob = null, voice = null, sampleRate = RATE } = {}) {
+  if (!music && !voiceBlob && !voice) return null;
+  const [m, v] = await Promise.all([music ? composeMusic(seconds, sampleRate) : null, voice || (voiceBlob ? decodeVoice(voiceBlob, sampleRate) : null)]);
   return mix(seconds, { music: m, voice: v, sampleRate });
 }

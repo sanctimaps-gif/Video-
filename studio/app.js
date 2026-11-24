@@ -6,6 +6,8 @@ import { Director } from './director.js';
 import { StageRecorder, canRecord } from './recorder.js';
 import { FrameRenderer, canRender, encodeJob } from './render.js';
 import { EMOJI, Realisateur, VARIANTS, renumber as renumberScenes } from './realisateur.js';
+import { parseVoiceId, saveVoiceSettings, speak, speakScenario, voiceReady, voiceSettings } from './voix.js';
+import { speechSeconds } from './narrateur.js';
 
 const params = new URLSearchParams(location.search);
 const SRC = params.get('src') || 'https://sanctimaps.fr/';
@@ -25,7 +27,100 @@ const ui = {
   addPause: $('#add-pause'), clear: $('#clear'), library: $('#library'), libList: $('#library-list'), libUsage: $('#library-usage'),
   demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
   music: $('#music'), voice: $('#voice'), voiceState: $('#voice-state'),
+  aiVoice: $('#ai-voice'), elVoice: $('#el-voice'), elKey: $('#el-key'), elTest: $('#el-test'), elState: $('#el-state'), elBadge: $('#el-badge'),
+  voiceSetup: $('#voice-setup'), listen: $('#listen'),
 };
+
+// ------------------------------------------------------- voix off IA
+
+// Les accroches et fins des dernières vidéos : la suivante en prend d'autres.
+const RECENT = 'sanctimaps-studio.voix-recentes';
+function recentLines() { try { return JSON.parse(localStorage.getItem(RECENT) || '[]'); } catch { return []; } }
+function rememberLines(ids) {
+  if (!ids?.length) return;
+  try { localStorage.setItem(RECENT, JSON.stringify([...ids, ...recentLines()].slice(0, 12))); } catch { /* sans stockage */ }
+}
+function refreshVoiceSetup() {
+  const s = voiceSettings();
+  ui.elVoice.value = s.voiceId || ''; ui.elKey.value = s.apiKey || '';
+  ui.aiVoice.checked = s.enabled !== false;
+  ui.elBadge.textContent = voiceReady(s) ? '— prête' : '— à régler';
+  if (!voiceReady(s) && s.enabled !== false) ui.voiceSetup.open = true;
+}
+function storeVoiceSetup() {
+  const s = voiceSettings();
+  const id = parseVoiceId(ui.elVoice.value);
+  if (ui.elVoice.value.trim() && !id) ui.elState.textContent = '⚠️ ID de voix non reconnu : collez l\'ID (ou le lien) copié depuis ElevenLabs.';
+  saveVoiceSettings({ ...s, voiceId: id || '', apiKey: ui.elKey.value.trim(), enabled: ui.aiVoice.checked });
+  if (id && ui.elVoice.value.trim() !== id) ui.elVoice.value = id;
+  ui.elBadge.textContent = voiceReady() ? '— prête' : '— à régler';
+}
+for (const el of [ui.elVoice, ui.elKey]) el.addEventListener('change', storeVoiceSetup);
+ui.aiVoice.addEventListener('change', () => { storeVoiceSetup(); if (ui.aiVoice.checked && !voiceReady()) ui.voiceSetup.open = true; });
+let voicePlayer = null;
+function playBlobs(blobs) {
+  voicePlayer?.pause();
+  const audio = voicePlayer = new Audio();
+  let i = 0;
+  const next = () => { if (i >= blobs.length || voicePlayer !== audio) return; const url = URL.createObjectURL(blobs[i++]); audio.src = url; audio.play().catch(() => {}); };
+  audio.addEventListener('ended', () => setTimeout(next, 150));
+  next();
+}
+ui.elTest.addEventListener('click', async () => {
+  storeVoiceSetup();
+  if (!voiceReady()) { ui.elState.textContent = '⚠️ Collez d\'abord l\'ID de la voix et la clé API.'; return; }
+  ui.elTest.disabled = true; ui.elState.textContent = 'Lecture en cours…';
+  try {
+    const { blob, seconds } = await speak('Il y a des histoires que la carte garde en mémoire. Voici celle des saints, sur SanctiMaps.');
+    playBlobs([blob]);
+    ui.elState.textContent = `✅ Voix prête (${seconds.toFixed(1)} s). Elle lira la voix off de chaque vidéo.`;
+  } catch (e) { ui.elState.textContent = `⚠️ ${e.message}`; }
+  finally { ui.elTest.disabled = false; }
+});
+ui.listen.addEventListener('click', async () => {
+  if (!scenario?.shots?.some((s) => s.narration)) { log('Ce storyboard n\'a pas de voix off.'); return; }
+  if (!voiceReady()) { ui.voiceSetup.open = true; ui.voiceSetup.scrollIntoView({ block: 'center' }); log('Voix off IA : réglez d\'abord l\'ID de la voix et la clé API ElevenLabs.'); return; }
+  ui.listen.disabled = true; const label = ui.listen.textContent;
+  try {
+    const clips = await speakScenario(scenario, { onProgress: (i, n) => { ui.listen.textContent = `🔊 Préparation ${i}/${n}…`; } });
+    playBlobs(clips.map((c) => c.blob));
+    log(`Voix off : ${clips.length} phrases, ${clips.reduce((a, c) => a + c.seconds, 0).toFixed(0)} s de voix.`);
+  } catch (e) { log(`Voix off IA : ${e.message}.`); }
+  finally { ui.listen.disabled = false; ui.listen.textContent = label; }
+});
+
+/**
+ * Avant le tournage : la voix off de chaque scène est lue par ElevenLabs, puis
+ * chaque scène reçoit le temps de dire sa phrase. Les phrases sont gardées avec
+ * la vidéo en cours (une reprise ne les redemande pas). Sans réglage ou en cas
+ * d'erreur, la vidéo se fait sans voix off IA, et le journal dit pourquoi.
+ */
+async function prepareVoice(job, scn) {
+  if (!job.aiVoice || job.voiceClips?.length) return;
+  if (!scn.shots.some((s) => s.narration)) return;
+  if (!voiceReady()) { log('Voix off IA non réglée (ID de la voix et clé API ElevenLabs) : vidéo sans voix off.'); job.aiVoice = false; return; }
+  setProgress(job, 'voice');
+  keepAlive.update('voix off', true);
+  log(`Voix off IA : lecture de ${scn.shots.filter((s) => s.narration).length} phrases par ElevenLabs…`);
+  let clips;
+  try { clips = await speakScenario(scn, { onProgress: (i, n) => { if (n) setProgress(job, 'voice', (i / n) * 100); } }); }
+  catch (e) { log(`Voix off IA impossible (${e.message}) : la vidéo se fait sans voix off.`); job.aiVoice = false; return; }
+  // Chaque phrase a le temps d'être dite avant la suivante : les scènes qui parlent s'allongent au besoin.
+  const at = new Map(scn.shots.map((s, i) => [s.id, i]));
+  let added = 0;
+  clips.forEach((c, k) => {
+    const i = at.get(c.id); const end = k + 1 < clips.length ? at.get(clips[k + 1].id) : scn.shots.length;
+    const span = scn.shots.slice(i, end).reduce((a, s) => a + s.duration, 0);
+    const need = c.seconds + 0.35;
+    if (need > span) { const d = need - span; scn.shots[end - 1].duration = +(scn.shots[end - 1].duration + d).toFixed(2); added += d; }
+  });
+  job.voiceClips = clips.map((c) => ({ id: c.id, blob: c.blob, seconds: c.seconds }));
+  const said = clips.reduce((a, c) => a + c.seconds, 0);
+  log(`Voix off IA prête : ${said.toFixed(1)} s de voix${added > 0.2 ? ` ; scènes allongées de ${added.toFixed(1)} s pour qu'elle ait le temps de tout dire` : ''}.`);
+  await library.saveJob(job);
+}
+// L'instant où commence chaque scène pendant le tournage (en images) : la voix s'y cale.
+let shotStarts = null;
 
 const clock = new Clock();
 const keepAlive = new KeepAlive();
@@ -122,6 +217,7 @@ async function loadStage(aspect = ui.aspect.value, styleName = ui.style.value) {
   sm.cursor.visible = false; sm.onCursor?.(sm.cursor);
   director = new Director(sm, data, {
     onShot: (shot, rehearsal) => {
+      if (!rehearsal && shotStarts && activeRenderer) shotStarts[shot.id] = activeRenderer.frames;
       if (rendering) stopCheck(null, true);
       if (playingScn === scenario) markShot(shot.id, rehearsal ? 'répétition' : 'en cours');
       if (!rehearsal) showCaption(shot);
@@ -180,7 +276,22 @@ function renderTimeline() {
     li.querySelector('.lbl').textContent = `${EMOJI[s.action] || '•'} ${s.label}`;
     const capEl = li.querySelector('.scene-cap');
     if (s.caption?.title && (scenario.captions !== false || s.caption.force)) capEl.textContent = `« ${s.caption.title}${s.caption.sub ? ' — ' + s.caption.sub : ''} »`; else capEl.remove();
-    if (s.narration) li.title = `Narration : ${s.narration}`;
+    // La voix off de la scène, lisible et modifiable : « elle fait ce qu'on lui dit ».
+    if (s.narration || ui.board.classList.contains('editing')) {
+      const v = document.createElement('span'); v.className = 'scene-voice';
+      v.textContent = s.narration ? `🎙️ « ${s.narration} »` : '🎙️ (pas de voix)';
+      const b = document.createElement('button'); b.className = 'mini'; b.textContent = '✎'; b.setAttribute('aria-label', 'Modifier la voix off de cette scène');
+      b.addEventListener('click', () => {
+        const t = prompt('Texte de la voix off pour cette scène (vide : pas de voix) :', s.narration || '');
+        if (t === null) return;
+        s.narration = t.trim().replace(/\s+/g, ' ');
+        // Une phrase plus longue que la scène : la scène s'allonge.
+        const need = speechSeconds(s.narration) + 0.3;
+        if (s.narration && need > s.duration) s.duration = +need.toFixed(1);
+        renderTimeline();
+      });
+      v.append(b); li.append(v);
+    }
     const input = li.querySelector('input'); input.value = s.duration;
     input.addEventListener('change', () => {
       const v = parseFloat(String(input.value).replace(',', '.'));
@@ -281,8 +392,10 @@ async function plan() {
     await new Promise((r) => setTimeout(r, key.endsWith('-ok') ? 60 : 30));
   };
   try {
-    const r = new Realisateur(data, { dryCommand, memory: sm?.memory });
+    // Une graine nouvelle à chaque génération, et les accroches récentes à éviter : jamais deux fois la même vidéo.
+    const r = new Realisateur(data, { dryCommand, memory: sm?.memory, seed: (Date.now() ^ (Math.random() * 2 ** 32)) >>> 0, avoid: recentLines() });
     directed = await r.direct(text, { aspect: ui.aspect.value, style: ui.style.value }, onStep);
+    rememberLines(directed.variants[directed.recommended]?.voice?.used);
     for (const v of Object.values(directed.variants)) { v.captions = ui.captions.checked; v.cursor = ui.cursor.checked; }
     // Musique demandée : la case se coche ; voix off demandée : le bouton le rappelle.
     if (directed.brief.music) ui.music.checked = true;
@@ -350,8 +463,9 @@ function renderChecks(checks, extra = []) {
 /** « ✨ Améliorer » : même sujet, meilleur rythme, introduction et conclusion soignées. */
 async function improveScenario() {
   if (!scenario?.shots?.length || generating) return;
-  const r = new Realisateur(data, { dryCommand, memory: sm?.memory });
+  const r = new Realisateur(data, { dryCommand, memory: sm?.memory, avoid: [...recentLines(), ...(scenario.voice?.used || [])] });
   const changes = await r.improve(scenario);
+  rememberLines(scenario.voice?.used);
   renderTimeline();
   renderChecks([], changes.map((text) => ({ ok: true, fixed: !/déjà équilibré/.test(text), text })));
   ui.checks.hidden = false; ui.checks.open = true;
@@ -482,7 +596,7 @@ function untilVisible() {
 // Une tâche survit à une page mise en pause ou fermée : elle reprend à la
 // dernière image rangée.
 
-const STATUS = { queued: 'En attente', preparing: 'Préparation des scènes', rendering: 'Génération', encoding: 'Assemblage de la vidéo', finalizing: 'Finalisation' };
+const STATUS = { queued: 'En attente', preparing: 'Préparation des scènes', voice: 'Voix off', rendering: 'Génération', encoding: 'Assemblage de la vidéo', finalizing: 'Finalisation' };
 const progress = new Map(); // id → { pct, label } en direct
 let cancelId = null, pauseId = null, queueRunning = false;
 /** Annulation ou pause demandée pour la vidéo en cours : on l'arrête à la prochaine image. */
@@ -501,7 +615,9 @@ function newJob(scn, title) {
     title: (title || scn.title || 'Vidéo SanctiMaps').trim().slice(0, 80), scenario: JSON.parse(JSON.stringify(scn)), aspect: scn.aspect || ui.aspect.value,
     fps: 30, framesDone: 0, expected: total(scn), thumb: null, status: 'queued',
     // Le son : la musique composée par le studio, et la voix off enregistrée pour ce storyboard.
-    music: !!ui.music.checked, voice: voiceTake?.blob || null };
+    music: !!ui.music.checked, voice: voiceTake?.blob || null,
+    // La voix off IA (si réglée) ; une voix enregistrée soi-même passe avant.
+    aiVoice: !voiceTake && !!ui.aiVoice.checked && !scn.voice?.off };
 }
 
 /** « 🎬 Exporter » : la vidéo rejoint la file et se fabrique en arrière-plan. */
@@ -667,6 +783,7 @@ async function renderJob(job) {
         await loadStage(job.aspect, scn.style);
         if (!(await rehearse(scn))) { log('Aucune scène réalisable.'); await library.dropJob(job.id).catch(() => {}); return 'noplan'; }
       }
+      await prepareVoice(job, scn);
       job.scenario = scn;
     }
     await loadStage(job.aspect, scn.style);
@@ -731,6 +848,7 @@ async function renderJob(job) {
     clock.listeners.add(onFrame);
     clock.beginRender(renderer, 30);
     const started = performance.now();
+    shotStarts = {};
     try {
       await director.play(scn);
     } finally {
@@ -738,9 +856,10 @@ async function renderJob(job) {
     }
     const done = await renderer.finish();
     job.frames = done.frames; job.framesDone = done.frames; job.status = 'encoding'; job.updated = Date.now();
+    job.shotStarts = shotStarts; shotStarts = null;
     // La durée demandée : la vidéo filmée plus longue sera accélérée à l'assemblage pour y tenir exactement.
     job.target = scn.target || null;
-    if (job.target && done.frames / 30 > job.target + 0.1) log(`Filmé : ${(done.frames / 30).toFixed(1)} s ; la vidéo est accélérée (×${(done.frames / 30 / job.target).toFixed(2)}) pour durer ${job.target} s, sans couper de scène.`);
+    if (job.target && !job.voiceClips?.length && done.frames / 30 > job.target + 0.1) log(`Filmé : ${(done.frames / 30).toFixed(1)} s ; la vidéo est accélérée (×${(done.frames / 30 / job.target).toFixed(2)}) pour durer ${job.target} s, sans couper de scène.`);
     if (done.thumb && !job.thumb) job.thumb = done.thumb;
     await library.saveJob(job);
     log(`Images rendues : ${(done.frames / 30).toFixed(1)} s, ${w}×${h}, en ${((performance.now() - started) / 1000).toFixed(0)} s de calcul (carte redessinée ${done.stats.mapRenders}×, ${done.stats.mapMs.toFixed(0)} ms/image, interface ${done.stats.overlayRenders}× ${done.stats.overlayMs.toFixed(0)} ms, ${(done.bytes / 1e6).toFixed(0)} Mo d'images).`);
@@ -1640,7 +1759,7 @@ ui.auto.addEventListener('click', async () => {
   else if (!rendering) keepAlive.stop();
 });
 ui.shoot.addEventListener('click', () => exportVideo());
-ui.edit.addEventListener('click', () => ui.board.classList.toggle('editing'));
+ui.edit.addEventListener('click', () => { ui.board.classList.toggle('editing'); renderTimeline(); });
 ui.improve.addEventListener('click', improveScenario);
 ui.addScene.addEventListener('click', async () => {
   const text = prompt('Scène à ajouter (une commande, ex. « Va à Rome », « Montre ses lieux », « Ouvre les jeux ») :');
@@ -1681,6 +1800,7 @@ ui.recHint.textContent = canRender()
   : 'Ce navigateur ne sait pas fabriquer de vidéo (iOS 16.4 ou plus récent requis) : le bouton passe en plein écran pour l\'enregistrement de l\'écran.';
 
 restore();
+refreshVoiceSetup();
 renderLibrary();
 // Une vidéo terminée pendant une absence (page rechargée) : le bouton pour la mettre sur le téléphone.
 remindPendingSaves();

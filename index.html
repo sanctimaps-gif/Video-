@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SanctiMaps Vidéo">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="stylesheet" href="studio/studio.css?v=20261120a">
+<link rel="stylesheet" href="studio/studio.css?v=20261124a">
 </head>
 <body>
 <div class="resume-modal" id="resume" hidden role="dialog" aria-modal="true" aria-labelledby="resume-title">
@@ -30,7 +30,7 @@
   <img class="logo" src="studio/icons/logo-256.png" alt="SanctiMaps.fr" width="56" height="56">
   <div>
     <h1>Studio vidéo SanctiMaps</h1>
-    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme. <span class="version">version 2026-11-20 a</span></div>
+    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme. <span class="version">version 2026-11-24 a</span></div>
   </div>
 </header>
 
@@ -62,6 +62,19 @@
       <label class="check"><input type="checkbox" id="captions" checked> Titres à l'écran (nom, dates, lieux — tirés de SanctiMaps)</label>
       <label class="check"><input type="checkbox" id="cursor" checked> Souris à l'écran (elle se déplace et clique comme une personne)</label>
       <label class="check"><input type="checkbox" id="music"> Musique d'ambiance (composée par le studio, ajoutée à la vidéo)</label>
+      <label class="check"><input type="checkbox" id="ai-voice" checked> Voix off IA sur chaque vidéo (voix de conteur ElevenLabs)</label>
+      <details class="voice-setup" id="voice-setup">
+        <summary>🎙️ Réglages de la voix off IA <span id="el-badge"></span></summary>
+        <ol class="hint">
+          <li>Sur ElevenLabs, ouvrez la voix « Christian Page – Storyteller » et ajoutez-la à « Mes voix ».</li>
+          <li>Touchez ⋮ puis « Copier l'ID de voix » (ou « Copier le lien de la voix ») et collez-le ci-dessous.</li>
+          <li>Clé API : profil ElevenLabs → « API Keys » → créer une clé (permission « Text to Speech »).</li>
+        </ol>
+        <label class="field">ID de la voix<input id="el-voice" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ID ou lien de la voix"></label>
+        <label class="field">Clé API ElevenLabs<input id="el-key" type="password" autocomplete="off" placeholder="sk_…"></label>
+        <div class="row"><button id="el-test">▶ Tester la voix</button></div>
+        <p class="hint" id="el-state">La clé et l'ID restent sur cet appareil ; ils ne sont envoyés qu'à ElevenLabs. Chaque vidéo utilise des crédits ElevenLabs (environ 1 caractère = 1 crédit).</p>
+      </details>
       <div class="row">
         <button id="plan" class="primary">✨ Générer avec l'IA</button>
         <button id="auto" title="Génère le storyboard puis lance la vidéo en arrière-plan">🤖 Génération automatique</button>
@@ -81,7 +94,8 @@
         <button id="play">▶ Prévisualiser</button>
       </div>
       <div class="row">
-        <button id="voice" title="Le texte de chaque scène défile à son moment pendant que vous lisez">🎙️ Enregistrer la voix off</button>
+        <button id="listen" title="La voix off IA lit le texte du storyboard">🔊 Écouter la voix off</button>
+        <button id="voice" title="Le texte de chaque scène défile à son moment pendant que vous lisez">🎙️ Enregistrer ma voix</button>
       </div>
       <p class="hint" id="voice-state" hidden></p>
       <div class="row">
@@ -232,15 +246,17 @@
 
 <!-- Chaque mise à jour change ce numéro : Safari recharge alors tous les modules au lieu de garder les anciens. -->
 <script type="importmap">{"imports": {
-  "./studio/director.js": "./studio/director.js?v=20261120a",
-  "./studio/keepalive.js": "./studio/keepalive.js?v=20261120a",
-  "./studio/library.js": "./studio/library.js?v=20261120a",
-  "./studio/planner.js": "./studio/planner.js?v=20261120a",
-  "./studio/recorder.js": "./studio/recorder.js?v=20261120a",
-  "./studio/render.js": "./studio/render.js?v=20261120a",
-  "./studio/sanctimaps.js": "./studio/sanctimaps.js?v=20261120a",
-  "./studio/realisateur.js": "./studio/realisateur.js?v=20261120a",
-  "./studio/son.js": "./studio/son.js?v=20261120a"
+  "./studio/director.js": "./studio/director.js?v=20261124a",
+  "./studio/keepalive.js": "./studio/keepalive.js?v=20261124a",
+  "./studio/library.js": "./studio/library.js?v=20261124a",
+  "./studio/planner.js": "./studio/planner.js?v=20261124a",
+  "./studio/recorder.js": "./studio/recorder.js?v=20261124a",
+  "./studio/render.js": "./studio/render.js?v=20261124a",
+  "./studio/sanctimaps.js": "./studio/sanctimaps.js?v=20261124a",
+  "./studio/realisateur.js": "./studio/realisateur.js?v=20261124a",
+  "./studio/son.js": "./studio/son.js?v=20261124a",
+  "./studio/narrateur.js": "./studio/narrateur.js?v=20261124a",
+  "./studio/voix.js": "./studio/voix.js?v=20261124a"
 }}</script>
   <div class="prompter" id="prompter" hidden role="dialog" aria-modal="true" aria-labelledby="prompter-title">
     <div class="prompter-box">
@@ -260,6 +276,6 @@
       <p class="hint">Lisez le texte affiché : il change au moment exact où la scène change dans la vidéo. Le micro s'arrête tout seul à la fin.</p>
     </div>
   </div>
-<script type="module" src="studio/app.js?v=20261120a"></script>
+<script type="module" src="studio/app.js?v=20261124a"></script>
 </body>
 </html>

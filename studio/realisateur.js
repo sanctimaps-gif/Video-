@@ -13,6 +13,7 @@
 // c'est un moteur de règles de réalisation, pas un modèle de langage.
 import { CONTINENT_LABEL, fold } from './sanctimaps.js';
 import { ACTIONS, Planner, STYLES, parseAspect, parseCentury, parseDuration, parseStyle, splitClauses, total } from './planner.js';
+import { Narrateur, rng, speechSeconds, voiceWishes } from './narrateur.js';
 
 export const DEFAULT_DURATION = 45;
 
@@ -90,8 +91,11 @@ export class Realisateur {
    * exécuter (le même analyseur que « Piloter la carte ») : c'est ainsi que le
    * réalisateur n'utilise que des commandes qui existent vraiment.
    */
-  constructor(data, { dryCommand = null, memory = null } = {}) {
+  constructor(data, { dryCommand = null, memory = null, seed = Date.now(), avoid = [] } = {}) {
     this.data = data; this.dryCommand = dryCommand; this.memory = memory;
+    // Le hasard de cette génération : l'ordre des scènes, la fin, les mots de la voix off.
+    // Ce que la demande impose passe toujours avant lui.
+    this.seed = seed >>> 0; this.rand = rng(this.seed); this.avoid = avoid;
     this.planner = new Planner(data, memory);
   }
 
@@ -310,7 +314,7 @@ export class Realisateur {
   scene(action, params, o = {}) {
     return { action, params: params || {}, purpose: o.purpose || '', priority: o.priority ?? 2, weight: o.weight ?? 1,
       transition: o.transition || (MOTION.has(action) ? 'mouvement fluide' : 'continu'), caption: o.caption || null,
-      narration: o.narration || '', minimum: o.minimum || 0 };
+      narration: o.narration || '', minimum: o.minimum || 0, beat: o.beat || null };
   }
 
   /** Le storyboard d'une version : une suite de scènes, chacune avec sa fonction. */
@@ -319,7 +323,7 @@ export class Realisateur {
     const styleName = brief.styleAsked && variantName === recommended(brief) ? brief.styleAsked : V.style;
     const S = brief.saints[0];
     const texts = await this.data.texts();
-    const scenes = []; this.notes = [];
+    const scenes = []; this.notes = []; this.scenes = scenes;
     const add = (...a) => { const s = this.scene(...a); scenes.push(s); return s; };
     const title = S ? `${STATUT[S.statut]?.[S.sex === 'f' ? 1 : 0] || ''} ${nameOf(S)}`.trim() : this.titleFor(brief);
     const home = brief.start?.iso || S?.country || brief.countries[0] || brief.places[0]?.iso || null;
@@ -376,8 +380,9 @@ export class Realisateur {
     // Les autres actions demandées (jeux, paramètres, panneaux…), avant la conclusion.
     for (const e of brief.explicit.filter((x) => !x.opening)) for (const sh of e.shots) add(sh.action, sh.params, { purpose: 'Demande : ' + e.clause, priority: 1 });
 
-    // Conclusion : jamais une fin brutale.
-    this.conclude(brief, scenes, add, { home: brief.end?.iso || home, title, S });
+    // Conclusion : jamais une fin brutale ; on se pose sur le dernier pays de l'histoire.
+    const lastIso = [...scenes].reverse().find((x) => x.params?.country)?.params.country;
+    this.conclude(brief, scenes, add, { home: brief.end?.iso || lastIso || home, title, S });
     // Le message de fin (« Découvrez SanctiMaps ») : le titre de la dernière scène, toujours affiché.
     const fin = brief.messages.filter((x) => x.end).at(-1);
     if (fin) {
@@ -386,7 +391,10 @@ export class Realisateur {
       last.narration = fin.text; last.minimum = Math.max(last.minimum || 0, 3.5); last.purpose += ' — message de fin';
     }
     const sc = this.finalize(brief, scenes, variantName, styleName);
-    sc.music = !!brief.music; sc.voiceWanted = !!brief.voice;
+    sc.music = !!brief.music; sc.voiceWanted = !!brief.voice; sc.structure = this.structure || null;
+    // Le sujet, gardé avec le storyboard : « Améliorer » peut réécrire la voix off plus tard.
+    sc.subject = { saintId: S?.id || null, focus: brief.focus, countries: brief.countries, century: brief.century };
+    await this.narrate(sc, brief);
     return sc;
   }
 
@@ -444,9 +452,11 @@ export class Realisateur {
     } else if (birth && !birth.approximate) {
       add('zoom_to_place', { place: birth.name, country: S.country }, { purpose: 'Le lieu de naissance', priority: 2, weight: 1,
         caption: { title: birth.name, sub: `${S.sex === 'f' ? 'Née' : 'Né'} ici${S.born != null ? (S.circa ? ' vers ' : ' en ') + year(S.born) : ''}` },
+        beat: { kind: 'birth', place: birth.name },
         narration: `${nameOf(S)} ${S.sex === 'f' ? 'est née' : 'est né'} à ${birth.name}${S.born != null ? (S.circa ? ' vers ' : ' en ') + year(S.born) : ''}.` });
     }
     // Présentation : la fiche du site, lisible assez longtemps.
+    const ficheAt = this.scenes.length;
     const desc = T.desc?.fr || ''; const bio = T.bio?.fr || '';
     add('open_saint', { query: nameOf(S) }, { purpose: 'Présenter le saint', priority: 1, weight: 0.8,
       caption: { title, sub: [lifespan(S), feastLabel(S)].filter(Boolean).join(' · ') } });
@@ -457,6 +467,7 @@ export class Realisateur {
     if (brief.wants.croises) add('show_croises', {}, { purpose: 'Les saints qu\'il a pu croiser', priority: 2, weight: 1.2,
       caption: { title: 'Ses contemporains', sub: 'Saints qu\'il a pu croiser — SanctiMaps' } });
     // Ses lieux : d'abord tous ensemble sur la carte, puis le parcours de sa vie.
+    const lieuxAt = this.scenes.length;
     const showLieux = lieux.length && (brief.wants.lieux || brief.focus === 'saint');
     if (showLieux) {
       const kinds = [...new Set(lieux.map((l) => QUOI[l.quoi]?.toLowerCase()))];
@@ -465,7 +476,9 @@ export class Realisateur {
       // Un lieu de chaque sorte d'abord (naissance, fondation, mort, sépulture…),
       // en commençant par celles que la demande nomme ; puis dans l'ordre de la vie.
       const kindsOrder = [...brief.wants.kinds, ...LIFE.filter((k) => !brief.wants.kinds.includes(k))];
-      const pool = kindsOrder.map((k) => lieux.filter((l) => l.quoi === k)).filter((g) => g.length);
+      // Parmi plusieurs lieux de la même sorte, le hasard choisit : deux vidéos ne refont pas le même parcours.
+      const shuffle = (a) => a.map((x) => [this.rand(), x]).sort((u, v) => u[0] - v[0]).map((x) => x[1]);
+      const pool = kindsOrder.map((k) => shuffle(lieux.filter((l) => l.quoi === k))).filter((g) => g.length);
       const chosen = [];
       for (let round = 0; chosen.length < Math.min(V.lieuxMax, lieux.length); round++) for (const g of pool) if (g[round] && chosen.length < V.lieuxMax) chosen.push(g[round]);
       chosen.sort((a, b) => LIFE.indexOf(a.quoi) - LIFE.indexOf(b.quoi) || lieux.indexOf(a) - lieux.indexOf(b));
@@ -477,10 +490,22 @@ export class Realisateur {
         add('frame_view', { x: l.x, y: l.y, ratio: l.iso === S.country ? 5 : 3.5, country: l.iso || S.country, near: l.nom },
           { purpose: `${QUOI[l.quoi] || 'Lieu'} : ${l.nom}`, priority: key ? 2 : 3, weight: 1.1,
             caption: { title: l.nom, sub: [QUOI[l.quoi], l.desc?.fr].filter(Boolean).join(' — ') },
+            beat: { kind: 'lieu', quoi: l.quoi, nom: l.nom, desc: l.desc?.fr || '' },
             narration: `${QUOI[l.quoi] || 'Lieu'} : ${l.nom}${l.desc?.fr ? ', ' + l.desc.fr : ''}.` });
       });
       if (lieux.length > chosen.length) this.notes.push(`${plural(lieux.length - chosen.length, 'autre lieu', 'autres lieux')} dans SanctiMaps, laissé${lieux.length - chosen.length > 1 ? 's' : ''} de côté pour tenir la durée.`);
     } else if (brief.wants.lieux) this.notes.push(`SanctiMaps n'indique pas de lieux marqués pour ${nameOf(S)} : la vidéo montre son lieu principal.`);
+    // Une fois sur deux à peu près (si la demande n'impose pas l'ordre) : le parcours
+    // d'abord, la fiche à la fin comme une révélation. « Ses lieux » est un bouton
+    // de la fiche : il reste avec elle.
+    const ordered = /\b(fiche|presente\w*) (puis|d abord|avant|ensuite)\b|\bd abord (la|sa) fiche\b/.test(fold(brief.request));
+    const tour = this.scenes.slice(lieuxAt).filter((x) => x.action === 'frame_view');
+    if (showLieux && tour.length >= 2 && !ordered && brief.end?.kind !== 'world' && this.rand() < 0.45) {
+      const fiche = this.scenes.splice(ficheAt, lieuxAt - ficheAt);
+      const rest = this.scenes.splice(ficheAt).filter((x) => x.action !== 'show_lieux');
+      this.scenes.push(...rest, ...fiche);
+      this.structure = 'parcours puis fiche';
+    } else this.structure = 'fiche puis parcours';
   }
 
   async placeStory(brief, V, add, texts, { home, cont }) {
@@ -497,13 +522,14 @@ export class Realisateur {
     for (const [i, name] of names.slice(0, Math.max(brief.places.length, V.lieuxMax - 1)).entries()) {
       const born = saints.filter((s) => fold(s.city) === fold(name));
       const famous = born.length ? await this.data.interesting(home, name) : null;
+      const famousS = famous ? born.find((x) => nameOf(x) === famous) : null;
       add(i ? 'pan_to_place' : 'zoom_to_place', { place: name, country: home }, { purpose: `Présenter ${name}`, priority: i < brief.places.length ? 1 : 3, weight: 1,
-        caption: { title: name, sub: famous ? `Ville natale de ${famous}` : '' } });
+        caption: { title: name, sub: famous ? `Ville natale de ${famous}` : '' }, beat: { kind: 'city', place: name, famous, famousF: famousS?.sex === 'f' } });
     }
     const pick = await this.data.interesting(home, brief.places[0]?.name);
     if (pick) {
-      add('open_saint', { query: pick }, { purpose: 'Un visage du lieu', priority: 1, weight: 0.8 });
       const s = (await this.data.findSaint(pick))?.saint;
+      add('open_saint', { query: pick }, { purpose: 'Un visage du lieu', priority: 1, weight: 0.8, beat: { kind: 'saint', saintId: s?.id || null } });
       add('show_profile', {}, { purpose: 'Sa fiche', priority: 1, weight: 2.5, minimum: 6 * V.reading,
         caption: s ? { title: nameOf(s), sub: [lifespan(s), texts[s.id]?.desc?.fr].filter(Boolean).join(' · ') } : null });
     }
@@ -513,9 +539,13 @@ export class Realisateur {
 
   conclude(brief, scenes, add, { home, title, S }) {
     const last = scenes.at(-1)?.action;
-    if (brief.end?.kind === 'profile' && ['show_profile', 'show_lieux', 'show_croises'].includes(last)) { scenes.at(-1).purpose += ' — conclusion'; return; }
+    const onFiche = ['show_profile', 'show_lieux', 'show_croises'].includes(last);
+    // Sans consigne, la fin varie : la vue du pays, le monde entier, ou rester sur la fiche.
+    const r = brief.end ? null : this.rand();
+    const end = brief.end?.kind || (onFiche && r < 0.25 ? 'profile' : r < 0.55 ? 'world' : 'country');
     const caption = { title, sub: 'SanctiMaps — la carte des saints' };
-    if (brief.end?.kind === 'world' || !home) add('back_to_world', {}, { purpose: 'Conclusion : vue générale', priority: 1, weight: 0.8, caption });
+    if (end === 'profile' && onFiche) { const s = scenes.at(-1); s.purpose += ' — conclusion'; if (!s.caption) s.caption = caption; return; }
+    if (end === 'world' || !home) add('back_to_world', {}, { purpose: 'Conclusion : vue générale', priority: 1, weight: 0.8, caption });
     else add('fit_country', { country: home }, { purpose: `Conclusion : vue du pays (${this.data.countryName(home)})`, priority: 1, weight: 0.8, caption,
       narration: S ? `${nameOf(S)}, sur la carte des saints.` : '' });
   }
@@ -529,11 +559,36 @@ export class Realisateur {
     return 'Les saints de France';
   }
 
+  /**
+   * La voix off : le narrateur écrit l'histoire sur le storyboard, puis chaque
+   * scène qui parle reçoit le temps de dire sa phrase (la durée totale reste
+   * celle demandée : le temps est pris sur les scènes qui en ont de trop).
+   */
+  async narrate(sc, brief, seed = this.seed) {
+    const n = new Narrateur(this.data, { seed: seed + 7919 * (Object.keys(VARIANTS).indexOf(sc.variant) + 1), avoid: this.avoid,
+      saintsCount: (await this.data.saints()).length });
+    const wishes = voiceWishes(brief?.request || sc.request);
+    const subject = sc.subject || {};
+    const saint = brief?.saints?.[0] || (subject.saintId ? (await this.data.saints()).find((x) => x.id === subject.saintId) : null) || null;
+    await n.write(sc, { brief: brief || { request: sc.request, focus: subject.focus, countries: subject.countries || [], century: subject.century }, saint, wishes });
+    // Une phrase plus longue que sa scène : la scène s'allonge, les autres se resserrent.
+    let changed = false;
+    const beats = sc.shots.map((s, i) => (s.narration ? i : -1)).filter((i) => i >= 0);
+    beats.forEach((i, k) => {
+      const end = k + 1 < beats.length ? beats[k + 1] : sc.shots.length;
+      const span = sc.shots.slice(i, end).reduce((a, s) => a + s.duration, 0);
+      const need = speechSeconds(sc.shots[i].narration) + 0.3;
+      if (need > span + 0.1) { sc.shots[i].minimum = Math.max(sc.shots[i].minimum || 0, sc.shots[i].duration + need - span); changed = true; }
+    });
+    if (changed) this.fitTiming(sc, sc.target);
+    return sc;
+  }
+
   /** Scènes → plans du metteur en scène (le format de scénario existant), minutés. */
   finalize(brief, scenes, variantName, styleName) {
     const describer = this.planner;
     const shots = scenes.map((s) => ({ id: '', action: s.action, params: s.params, duration: 0, label: describer.describe(s),
-      purpose: s.purpose, priority: s.priority, weight: s.weight, transition: s.transition, caption: s.caption, narration: s.narration, minimum: s.minimum }));
+      purpose: s.purpose, priority: s.priority, weight: s.weight, transition: s.transition, caption: s.caption, narration: s.narration, minimum: s.minimum, beat: s.beat }));
     const sc = { request: brief.request, title: shots[0]?.caption?.title || this.titleFor(brief), shots, style: styleName, speed: 1, aspect: brief.aspect,
       target: brief.target, notes: [...brief.notes, ...this.notes], variant: variantName, captions: brief.captions, version: 2 };
     renumber(sc);
@@ -801,6 +856,10 @@ export class Realisateur {
       changes.push('Fiche allongée à 5 s pour être lisible.');
     }
     this.fitTiming(sc, target);
+    // Une nouvelle voix off : autre accroche, autres tournures, autre fin (sauf texte imposé).
+    const hookBefore = sc.voice?.hook;
+    await this.narrate(sc, null, Date.now());
+    if (!sc.voice?.off) changes.push(sc.voice?.verbatim ? 'Voix off : votre texte, recalé sur les scènes.' : `Voix off réécrite${sc.voice?.hook && sc.voice.hook !== hookBefore ? ' avec une nouvelle accroche' : ''}.`);
     if (JSON.stringify(sc.shots.map((s) => [s.action, s.params, s.duration])) === before && !changes.length) changes.push('Le scénario est déjà équilibré : rien à changer.');
     return changes;
   }
@@ -862,8 +921,10 @@ export function recommended(brief) {
   if (s === 'educational') return 'informative';
   if (s) return 'documentary';
   if (brief.wants.dynamicIntro || brief.target <= 30 || brief.aspect === '9:16') return 'dynamic';
-  if (/\b(explique|apprendre|decouvrir|pedagog|eleves|enfants|cours)\b/.test(fold(brief.request))) return 'informative';
-  return 'documentary';
+  if (/\b(explique|apprendre|pedagog|eleves|cours|lecon)\b/.test(fold(brief.request))) return 'informative';
+  if (/\b(documentaire|pose|calme|lent|contemplati\w*)\b/.test(fold(brief.request))) return 'documentary';
+  // Le but des vidéos : donner envie d'aller sur le site — dynamique par défaut.
+  return 'dynamic';
 }
 
 export function renumber(sc) { sc.shots.forEach((s, i) => { s.id = `s${String(i + 1).padStart(2, '0')}`; }); }
