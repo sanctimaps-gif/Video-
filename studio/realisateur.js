@@ -46,7 +46,22 @@ const STATUT = { saint: ['Saint', 'Sainte'], bienheureux: ['Bienheureux', 'Bienh
   serviteur: ['Serviteur de Dieu', 'Servante de Dieu'] };
 const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const CONT_WORDS = { europe: 'europe', afrique: 'africa', asie: 'asia', oceanie: 'oceania',
+  'africains?': 'africa', 'africaines?': 'africa', 'europeens?': 'europe', 'europeennes?': 'europe', 'asiatiques?': 'asia', 'oceaniens?': 'oceania',
+  'latino americains?': 'south-america', 'sud americains?': 'south-america',
   'amerique du nord': 'north-america', 'amerique du sud': 'south-america', 'amerique latine': 'south-america' };
+
+// Les nationalités : « saints italiens », « une sainte polonaise »…
+const DEMONYMS = [
+  [/\bfrancais\w*\b/, 'FRA'], [/\bitalien\w*\b/, 'ITA'], [/\bespagnol\w*\b/, 'ESP'], [/\bportugais\w*\b/, 'PRT'], [/\bpolonais\w*\b/, 'POL'],
+  [/\ballemand\w*\b/, 'DEU'], [/\banglais\w*\b/, 'GBR'], [/\bbritanni\w*\b/, 'GBR'], [/\birlandais\w*\b/, 'IRL'], [/\bbelge\w*\b/, 'BEL'], [/\bsuisses?\b/, 'CHE'],
+  [/\bautrichien\w*\b/, 'AUT'], [/\bhongrois\w*\b/, 'HUN'], [/\btcheque\w*\b/, 'CZE'], [/\bcroate\w*\b/, 'HRV'], [/\bgrecs?\b|\bgrecques?\b/, 'GRC'],
+  [/\brusses?\b/, 'RUS'], [/\blibanais\w*\b/, 'LBN'], [/\begyptien\w*\b/, 'EGY'], [/\bethiopien\w*\b/, 'ETH'], [/\bmexicain\w*\b/, 'MEX'],
+  [/\bbresilien\w*\b/, 'BRA'], [/\bargentin\w*\b/, 'ARG'], [/\bperuvien\w*\b/, 'PER'], [/\bcolombien\w*\b/, 'COL'], [/\bcanadien\w*\b/, 'CAN'],
+  [/\bamericain\w*\b/, 'USA'], [/\bchinois\w*\b/, 'CHN'], [/\bjaponais\w*\b/, 'JPN'], [/\bcoreen\w*\b/, 'KOR'], [/\bvietnamien\w*\b/, 'VNM'],
+  [/\bphilippin\w*\b/, 'PHL'], [/\bindien\w*\b/, 'IND'], [/\bougandais\w*\b/, 'UGA'], [/\bnigerian\w*\b/, 'NGA'], [/\bcongolais\w*\b/, 'COD'],
+  [/\bneerlandais\w*\b|\bhollandais\w*\b/, 'NLD'], [/\bslovaque\w*\b/, 'SVK'], [/\bslovene\w*\b/, 'SVN'], [/\blituanien\w*\b/, 'LTU'],
+  [/\bsuedois\w*\b/, 'SWE'], [/\bnorvegien\w*\b/, 'NOR'], [/\bdanois\w*\b/, 'DNK'], [/\bsyrien\w*\b/, 'SYR'], [/\bturcs?\b|\bturques?\b/, 'TUR'],
+];
 
 /** Ce qui ferme une fiche ouverte sur la carte. */
 const CLOSES_FICHE = new Set(['establish_world', 'back_to_world', 'open_continent', 'open_country', 'zoom_to_place', 'pan_to_place',
@@ -148,6 +163,8 @@ export class Realisateur {
     let rest = text;
     for (const n of taken) rest = rest.split(n).join(' ');
     brief.countries = this.data.countriesIn(rest);
+    // « saints italiens », « une sainte polonaise » : la nationalité donne le pays.
+    for (const [re, iso] of DEMONYMS) if (re.test(fold(rest)) && !brief.countries.includes(iso) && this.data.countryById.has(iso)) brief.countries.push(iso);
     const rt = fold(rest);
     for (const [w, cid] of Object.entries(CONT_WORDS)) if (new RegExp(`\\b${w}\\b`).test(rt) && !brief.continents.includes(cid)) brief.continents.push(cid);
     for (const clause of splitClauses(rest)) {
@@ -205,6 +222,10 @@ export class Realisateur {
     if (/\b(fondu|fondus|enchaine|transitions?)\b/.test(t) || /apparitions? progressives?/.test(t)) brief.notes.push('Transitions : la vidéo est un seul plan continu ; les transitions sont des mouvements de caméra fluides (pas de fondus).');
     if (/\b(drone|3d|relief|satellite)\b/.test(t)) brief.unsupported.push('Les vues 3D ou satellite : SanctiMaps est une carte à plat.');
 
+    // Rien de nommé (ni saint, ni lieu, ni siècle…) : on interprète la demande
+    // avec les données du site (patronage, rôle, époque, prénom, mots de la fiche).
+    await this.interpret(brief, text, taken);
+
     // Le reste de la demande : des commandes du pilotage (jeux, paramètres,
     // panneaux…), traduites par l'analyseur existant, sans rien inventer.
     for (const clause of splitClauses(text)) {
@@ -223,6 +244,119 @@ export class Realisateur {
       }
     }
     return brief;
+  }
+
+  /**
+   * Comprendre une demande qui ne nomme rien : « le saint patron des marins »,
+   * « une sainte morte jeune », « un saint roi du Moyen Âge », « mon prénom
+   * c'est Pierre », « le saint au dragon »… On cherche dans les données du site
+   * (patronages, rôles, dates, prénoms, fiches) le saint qui y répond le mieux.
+   * Si vraiment rien ne correspond, ce n'est plus « les saints de France » : un
+   * saint parmi les plus documentés, différent à chaque fois, de préférence
+   * fêté ces jours-ci — et la réflexion dit pourquoi.
+   */
+  async interpret(brief, text, taken) {
+    const t = fold(text);
+    // « un saint africain », « une sainte espagnole » (au singulier) : une personne de cette région ;
+    // « les saints italiens » (au pluriel) : la visite du pays, comme avant.
+    const one = /\b(un|une|le|la|ce|cette)\s+(saint|sainte|bienheureux|bienheureuse)\b/.test(t) && !/\b(les|des)\s+saint/.test(t);
+    const region = (brief.countries.length || brief.continents.length) && one && !brief.places.length
+      ? { countries: [...brief.countries], continents: [...brief.continents] } : null;
+    if (brief.saints.length || brief.places.length || ((brief.countries.length || brief.continents.length) && !region) || brief.century
+      || brief.calendar || brief.apparitions) return;
+    const inRegion = (s) => !region || region.countries.includes(s.country) || region.continents.includes(this.data.countryById.get(s.country)?.continent);
+    const saints = await this.data.saints();
+    const texts = await this.data.texts();
+    // Un prénom : « mon prénom c'est Pierre », « je m'appelle Marie », « le saint de Lucie ».
+    const pm = /\b(?:prenom|je m appelle|m appelle|s appelle|qui s appelle|fete des|ma fete|fete de)\s+(?:c est\s+|est\s+)?([a-z][a-z-]{2,20})\b/.exec(t);
+    if (pm) {
+      const f = await this.data.findSaint(pm[1]);
+      if (f && f.score >= 30) {
+        brief.saints.push(f.saint); taken.push(pm[1]);
+        brief.interpretation = `Le prénom « ${cap(pm[1])} » : ${nameOf(f.saint)}, le saint de ce prénom le plus documenté.`;
+        brief.themeQuestion = `Sais-tu qui est le saint qui porte le prénom ${cap(pm[1])} ?`;
+        return;
+      }
+    }
+    const STOPW = new Set(['video', 'videos', 'fais', 'faire', 'cree', 'creer', 'moi', 'une', 'des', 'les', 'sur', 'pour', 'avec', 'dans', 'qui', 'que', 'quel', 'quelle',
+      'saint', 'sainte', 'saints', 'saintes', 'secondes', 'minute', 'minutes', 'montre', 'raconte', 'parle', 'histoire', 'vie', 'tiktok', 'dynamique', 'courte',
+      'longue', 'format', 'vertical', 'verticale', 'horizontal', 'carre', 'musique', 'voix', 'off', 'veux', 'voudrais', 'aimerais', 'presente', 'connu', 'connue',
+      'celebre', 'plus', 'tres', 'bien', 'aussi', 'etait', 'est', 'son', 'ses', 'leur', 'aux', 'du', 'de', 'la', 'le', 'un', 'et', 'ou', 'a', 'en', 'patron', 'patronne',
+      'protecteur', 'protectrice', 'protege', 'protegent', 'mort', 'morte', 'jeune', 'jeunes']);
+    const words = [...new Set(t.split(' ').filter((w) => w.length >= 4 && !STOPW.has(w) && !/^\d+$/.test(w)))];
+    const stem = (w) => w.replace(/(aux|eaux|s|x)$/, '');
+    // Le rôle : « roi », « papes », « martyre », « missionnaires »…
+    const ROLES = [[/\brois?\b/, 'king'], [/\breines?\b/, 'queen'], [/\bpapes?\b/, 'pope'], [/\bmartyr\w*\b/, 'martyr'], [/\bmissionnaires?\b/, 'missionary'],
+      [/\beveques?\b/, 'bishop'], [/\bmoines?\b/, 'monk'], [/\b(religieuses?|nonnes?|soeurs?)\b/, 'nun'], [/\babbes?\b/, 'abbot'], [/\babbesses?\b/, 'abbess'],
+      [/\bermites?\b/, 'hermit'], [/\bmystiques?\b/, 'mystic'], [/\bpretres?\b/, 'priest'], [/\bdiacres?\b/, 'deacon'], [/\bcardina(l|ux)\b/, 'cardinal'],
+      [/\bapotres?\b/, 'apostle'], [/\bvierges?\b/, 'virgin'], [/\bpredicat\w*\b/, 'preacher'], [/\b(laics?|laiques?)\b/, 'layperson'], [/\bsoldats?\b/, 'soldier'],
+      [/\bprince\w*\b/, 'prince'], [/\bprophetes?\b/, 'prophet'], [/\bpelerin\w*\b/, 'pilgrim'], [/\bevangelistes?\b/, 'evangelist'], [/\bveuves?\b/, 'widow'],
+      [/\bdocteurs? de l eglise\b/, 'doctor'], [/\bfondat(eur|rice)s?\b/, 'founder']];
+    const roles = ROLES.filter(([re]) => re.test(t)).map(([, k]) => k);
+    const female = /\b(saintes|une sainte|la sainte|sainte des|sainte du|sainte de|femmes?|feminin\w*|religieuses?|reines?|abbesses?|vierges?|veuves?)\b/.test(t);
+    const young = /\b(jeunes?|enfants?|adolescent\w*|ados?|mort\w* jeunes?)\b/.test(t);
+    const period = /\bmoyen age\b/.test(t) ? [476, 1492] : /\b(antiquite|premiers chretiens|premiers siecles|empire romain)\b/.test(t) ? [-100, 476]
+      : /\brenaissance\b/.test(t) ? [1400, 1600] : /\b(modernes?|recents?|contemporains?|xxe|20e|xxi\w*|notre epoque)\b/.test(t) ? [1850, 2100] : null;
+    // Ce qu'il protège : « patron des marins », « qui protège les étudiants ».
+    const pr = /\b(?:patron(?:ne)?s?|protect(?:eur|rice)s?|protege\w*|veille sur)\s+(?:(des|du|de la|de l|les|la|le|l)\s+)?([a-z][a-z -]{2,40})/.exec(t)
+      // « le saint des animaux », « la sainte des malades » : un patronage sans le mot « patron ».
+      || /\bsaint(?:e)?s?\s+(des|du|de la|de l)\s+([a-z][a-z -]{2,40})/.exec(t);
+    const patronWords = pr ? pr[2].split(' ').filter((w) => w.length >= 4 && !STOPW.has(w)).map(stem) : [];
+    // Un mot rare (« dragon ») désigne mieux qu'un mot courant : on compte dans combien de fiches il apparaît.
+    const bodies = new Map(saints.map((s) => [s.id, ` ${fold(`${texts[s.id]?.desc?.fr || ''} ${texts[s.id]?.bio?.fr || ''}`)} `]));
+    const df = new Map(words.filter((w) => w.length >= 5).map((w) => [w, saints.reduce((a, s) => a + (bodies.get(s.id).includes(` ${w}`) ? 1 : 0), 0)]));
+    const weightOf = (w) => { const n = df.get(w) || 0; return !n ? 0 : n <= 3 ? 7 : n <= 20 ? 4 : n <= 100 ? 2 : 0; };
+    let best = [];
+    for (const s of saints) {
+      if (!inRegion(s)) continue;
+      if (female && s.sex !== 'f' && !roles.length) continue;
+      const pat = fold(s.patronage?.fr || '');
+      const desc = bodies.get(s.id);
+      let score = 0;
+      for (const w of patronWords) if (pat.split(' ').some((x) => stem(x) === w)) score += 8;
+      // Le patronage exact (« les malades ») passe devant un patronage voisin (« les malades de la tête »).
+      const patRaw = (s.patronage?.fr || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      if (pr && patRaw && new RegExp(`(^|, |et )(?:les |la |le |l')?${fold(pr[2]).trim()}(,|$| et )`).test(patRaw)) score += 4;
+      for (const r of roles) if (s.titles?.includes(r)) score += 4;
+      if (female && s.sex === 'f') score += 2;
+      if (young && s.born != null && s.died != null && s.died - s.born <= 25) score += 4;
+      if (period && s.died != null) score += s.died >= period[0] && s.died <= period[1] ? 3 : -6;
+      for (const w of words) if (w.length >= 5 && !patronWords.includes(stem(w)) && desc.includes(` ${w}`)) score += weightOf(w);
+      // À pertinence égale, le saint le plus connu (fiche la plus riche) passe devant.
+      // Dans une région demandée, chaque saint compte (le plus connu d'abord) ; sinon il faut un vrai point commun.
+      // (une région seule : le plus connu d'abord, la notoriété pèse davantage).
+      const onlyRegion = region && !patronWords.length && !roles.length && !young && !period;
+      if (score >= 4 || (region && (!female || s.sex === 'f'))) best.push({ s, score: score + this.data.richness(s, texts) / (onlyRegion ? 1.5 : 4) });
+    }
+    best.sort((a, b) => b.score - a.score);
+    if (best.length) {
+      // Parmi les meilleurs (à peu près ex æquo), le hasard choisit : la même demande donne des vidéos différentes.
+      const top = best.filter((b) => b.score >= best[0].score - 3).slice(0, 4);
+      const pick = top[Math.floor(this.rand() * top.length)].s;
+      brief.saints.push(pick); taken.push(nameOf(pick));
+      const why = [patronWords.length && pick.patronage?.fr && `patron de : ${pick.patronage.fr.toLowerCase()}`, roles.length && titlesOf(pick).join(', '),
+        young && pick.died != null && pick.born != null && `mort${pick.sex === 'f' ? 'e' : ''} à ${pick.died - pick.born} ans`, period && lifespan(pick)].filter(Boolean).join(' ; ');
+      brief.interpretation = `Aucun saint nommé : j'ai cherché dans les données du site ce qui répond à la demande → ${nameOf(pick)}${why ? ` (${why})` : ''}.`
+        + (best.length > 1 ? ` Autres possibilités : ${best.slice(0, 4).filter((b) => b.s !== pick).slice(0, 3).map((b) => nameOf(b.s)).join(', ')}.` : '');
+      if (region) { brief.countries = []; brief.continents = []; }
+      if (pr && patronWords.length && pick.patronage?.fr) {
+        const det = { des: 'les', du: 'le', 'de la': 'la', 'de l': "l'", les: 'les', la: 'la', le: 'le', l: "l'" }[pr[1] || 'les'] || 'les';
+        // Les mots tels que l'utilisateur les a écrits (avec leurs accents).
+        const original = pr[2].trim().split(' ').map((w) => text.split(/[^\p{L}'-]+/u).find((o) => fold(o) === w) || w).join(' ');
+        brief.themeQuestion = `Sais-tu ${pick.sex === 'f' ? 'quelle sainte' : 'quel saint'} protège ${det}${det.endsWith("'") ? '' : ' '}${original} ?`;
+      }
+      return;
+    }
+    // Vraiment rien : un saint parmi les plus documentés, fêté ces jours-ci de préférence.
+    const today = new Date();
+    const near = (s) => { const m = /^(\d\d)-(\d\d)$/.exec(s.feast || ''); if (!m) return 99; const d = new Date(today.getFullYear(), +m[1] - 1, +m[2]); return Math.abs((d - today) / 864e5); };
+    const pool = [...saints].sort((a, b) => this.data.richness(b, texts) - this.data.richness(a, texts)).slice(0, 150);
+    const soon = pool.filter((s) => near(s) <= 7);
+    const choice = (soon.length ? soon : pool)[Math.floor(this.rand() * (soon.length || pool.length))];
+    if (choice && !brief.explicit.length && !brief.wants.demo) {
+      brief.saints.push(choice); taken.push(nameOf(choice));
+      brief.interpretation = `Demande sans sujet précis : je propose ${nameOf(choice)}${near(choice) <= 7 ? `, ${feastLabel(choice)} (dans les jours qui viennent)` : ', parmi les saints les plus documentés du site'}. Précisez un saint, un pays, un thème (« patron des marins », « une sainte morte jeune »…) pour un autre sujet.`;
+    }
   }
 
   /** Une proposition de la demande qui ne décrit que la vidéo (durée, format, ton). */
@@ -274,6 +408,7 @@ export class Realisateur {
           : focus === 'century' ? `les saints du ${brief.century}e siècle${brief.countries[0] ? ' en ' + this.data.countryName(brief.countries[0]) : ''}`
             : focus === 'apparitions' ? 'les apparitions' : focus === 'commands' ? 'une démonstration de l\'application' : 'les saints de France (demande trop vague : découverte par défaut)';
     ask('Quel est le sujet ?', cap(subject) + '.');
+    if (brief.interpretation) ask('Comment ai-je compris la demande ?', brief.interpretation);
     // L'idée générale : ce que la vidéo veut faire comprendre, pas seulement ce qu'elle montre.
     const idea = ideeGenerale(brief.request);
     brief.idea = idea;
@@ -417,7 +552,7 @@ export class Realisateur {
     const sc = this.finalize(brief, scenes, variantName, styleName);
     sc.music = !!brief.music; sc.voiceWanted = !!brief.voice; sc.structure = this.structure || null;
     // Le sujet, gardé avec le storyboard : « Améliorer » peut réécrire la voix off plus tard.
-    sc.subject = { saintId: S?.id || null, focus: brief.focus, countries: brief.countries, century: brief.century };
+    sc.subject = { saintId: S?.id || null, focus: brief.focus, countries: brief.countries, century: brief.century, themeQuestion: brief.themeQuestion || null };
     await this.narrate(sc, brief);
     return sc;
   }
@@ -592,6 +727,8 @@ export class Realisateur {
     const n = new Narrateur(this.data, { seed: seed + 7919 * (Object.keys(VARIANTS).indexOf(sc.variant) + 1), avoid: this.avoid,
       saintsCount: (await this.data.saints()).length });
     const wishes = voiceWishes(brief?.request || sc.request);
+    // La question que la demande sous-entend (« patron des marins » → « Sais-tu quel saint protège les marins ? »).
+    if (!wishes.question && (brief?.themeQuestion || sc.subject?.themeQuestion)) wishes.question = brief?.themeQuestion || sc.subject.themeQuestion;
     const subject = sc.subject || {};
     const saint = brief?.saints?.[0] || (subject.saintId ? (await this.data.saints()).find((x) => x.id === subject.saintId) : null) || null;
     await n.write(sc, { brief: brief || { request: sc.request, focus: subject.focus, countries: subject.countries || [], century: subject.century }, saint, wishes });

@@ -68,6 +68,17 @@ complémentaire de la voix, dès la première image en haut ; l'image bouge dans
 **sous-titres** de la voix off incrustés (case cochée par défaut) pour ceux qui regardent sans le son ; la
 musique démarre tout de suite et passe sous la voix.
 
+**Comprendre une demande qui ne nomme rien.** Quand ni saint, ni lieu, ni siècle n'est nommé, le
+réalisateur interprète la demande avec les données du site au lieu de retomber sur « les saints de
+France » : patronage (« patron des marins », « la sainte des malades », « le saint des animaux »), rôle
+(roi, pape, martyr, missionnaire, ermite…), sainte, mort jeune, époque (Moyen Âge, premiers chrétiens,
+saints récents), nationalité ou continent (« une sainte polonaise », « un saint africain » ; au pluriel,
+« les saints italiens », c'est la visite du pays), prénom (« mon prénom c'est Bernadette »), ou mots rares
+cherchés dans les fiches (« le saint au dragon »). Il choisit le saint qui répond le mieux (les plus connus
+d'abord, avec un peu de hasard), en fait la question d'ouverture (« Sais-tu quel saint protège les
+marins ? ») et explique son choix dans sa réflexion, avec d'autres possibilités. Sans aucun indice : un saint
+différent à chaque fois, parmi les plus documentés, de préférence fêté ces jours-ci.
+
 **Anecdotes sourcées.** `tools/anecdotes.py` rassemble des anecdotes sur les saints, à partir des
 sources validées : **Wikipédia en français** pour le texte (seules les phrases appuyées sur une référence,
 dont le saint est le sujet, tirées des parties qui racontent sa vie, sa légende ou son culte ; lien permanent

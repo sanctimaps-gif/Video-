@@ -50,6 +50,9 @@ export function withArticle(nom) {
   const n = String(nom || '').trim();
   // Quelques lieux célèbres qui prennent l'article malgré leur majuscule.
   if (/^(Sainte-Chapelle|Portioncule|Verna|Grande-Chartreuse|Chartreuse|Sorbonne|Salette|Trappe)\b/.test(n)) return `la ${n}`;
+  // Un nom commun en tête, avec majuscule (« Institut biblique pontifical », « Université de Rome ») : il prend l'article.
+  const cm = /^(Institut|Université|Séminaire|Collège|Basilique|Cathédrale|Abbaye|Église|Monastère|Couvent|Sanctuaire|Hôpital|Palais|Château|Prieuré|Chapelle|Grotte|Carmel|Oratoire|Académie|École)(?=\s|$)/.exec(n);
+  if (cm) return `${/^[AEIOUÉÈÊÂÎÔÛH]/.test(cm[1]) ? "l'" : /^(Université|Basilique|Cathédrale|Abbaye|Église|Chapelle|Grotte|Académie|École)$/.test(cm[1]) ? 'la ' : 'le '}${n}`;
   const m = /^([a-zàâçéèêëîïôûùüÿœ]+)\b/.exec(n);
   if (!m) return n;
   const w = m[1];
@@ -111,7 +114,8 @@ function asLegend(text) {
 
 /** « de Antoine » → « d'Antoine ». */
 const deName = (name) => (/^[aeiouyéèêâîôûhAEIOUYÉÈÊÂÎÔÛH]/.test(name) ? `d'${name}` : `de ${name}`);
-const atPlace = (nom) => { const a = withArticle(nom); return /^le /.test(a) ? `au ${a.slice(3)}` : `à ${a}`; };
+// « à Le Caire » → « au Caire », « à Les Sables » → « aux Sables ».
+const atPlace = (nom) => { const a = withArticle(nom); return /^le /i.test(a) ? `au ${a.slice(3)}` : /^les /i.test(a) ? `aux ${a.slice(4)}` : `à ${a}`; };
 
 export function countryGrammar(name) {
   const n = String(name || '');
@@ -341,6 +345,7 @@ export class Narrateur {
     // La réponse à la question de la demande est mise de côté dès le départ : elle
     // ne sera dite qu'à la fin (et pas avant, en passant).
     this.reserved = wishes.question && facts ? this.bestSentence(facts, '') : '';
+    this.kindShots = new Map(); this.kindTally = {};
     // 1. Chaque moment écrit sa meilleure phrase, sans se soucier de la place.
     const texts = [];
     for (const [k, b] of beats.entries()) {
@@ -494,7 +499,7 @@ export class Narrateur {
         { id: 'contradiction', tags: ['question', 'mystere', 'ludique'], text: `Vous croyez connaître ${name} ? Regardez bien jusqu'à la fin.` },
         { id: 'curiosite', tags: ['mystere', 'question'], text: `Voici ce que peu de gens savent sur ${name}. Restez jusqu'au bout.` },
         ago && city && { id: 'il-y-a', tags: ['chiffre', 'epique', 'question'], text: `Il y a ${ago} ans naissait ${first}. Qui aurait pu deviner ${role && !/jeune|veuve/.test(role) ? `qu'${il} deviendrait ${role}, puis saint${e} ?` : 'son destin ?'}` },
-        born != null && city && { id: 'date-lieu', tags: ['chiffre', 'mystere', 'epique', 'question'], text: `${circa ? 'Vers' : 'En'} ${year(born)}, ${un} enfant naît à ${city}. Qui aurait pu deviner ce qu'${il} allait devenir ?` },
+        born != null && city && { id: 'date-lieu', tags: ['chiffre', 'mystere', 'epique', 'question'], text: `${circa ? 'Vers' : 'En'} ${year(born)}, ${un} enfant naît ${atPlace(city)}. Qui aurait pu deviner ce qu'${il} allait devenir ?` },
         death && died != null && { id: 'flashback', tags: ['flashback', 'mystere', 'epique'], text: `En ${year(died)}, tout s'arrête ${atPlace(death.nom)}. Mais pour comprendre, il faut remonter au tout début.` },
         patron && { id: 'identification', tags: ['question', 'ludique'], text: `${cap(patron)} ${/^les /i.test(patron) ? 'ont' : 'a'} ${F.f ? 'une sainte protectrice' : 'un saint protecteur'}. ${F.f ? 'La' : 'Le'} connaissez-vous ?` },
         F.feastSoon && feast && { id: 'fete', tags: ['question', 'emotion'], text: `Le ${feast}, l'Église fête ${name}. Mais connaissez-vous vraiment son histoire ?` },
@@ -580,7 +585,7 @@ export class Narrateur {
   bestSentence(F, said = '') {
     // Une anecdote dite loin de son lieu dit d'abord où l'on est (« il y partage… »).
     const story = (a) => placed(a.nom, fit(a.text, 34));
-    const pool = [...F.anecdotes.map(story), ...F.bio, F.patronage ? `Aujourd'hui encore, ${F.il} veille sur ${F.patronage}.` : '', F.desc ? `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '']
+    const pool = [...F.anecdotes.map(story), ...F.bio, F.patronage ? `Aujourd'hui encore, ${F.il} veille sur ${F.patronage}.` : '', F.desc && !/^(«|Le |La |Les |L')/.test(F.desc) ? `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '']
       .filter((x) => x && words(x) <= 40 && !said.includes(x.slice(-40)));
     // À égalité, une anecdote (une scène racontée) révèle mieux qu'une phrase de fiche.
     const stories = new Set(F.anecdotes.map(story));
@@ -608,6 +613,14 @@ export class Narrateur {
     }
     const a = atPlace(b.nom), Nom = cap(withArticle(b.nom));
     const died = F.died != null ? `, en ${year(F.died)}` : '';
+    // Deux lieux de la même sorte (deux lieux de formation) : la seconde phrase n'est pas la même.
+    if (!this.kindShots.has(shot)) this.kindShots.set(shot, (this.kindTally[b.quoi] = (this.kindTally[b.quoi] || 0) + 1));
+    const again = this.kindShots.get(shot) > 1;
+    if (again) {
+      const more = { formation: `Puis ${F.il} poursuit sa formation ${a}.`, fondation: `Autre fondation : ${withArticle(b.nom)}.`, oeuvre: `Son œuvre le mène aussi ${a}.`,
+        residence: `Puis ${F.il} s'installe ${a}.`, predilection: `${Nom} lui était cher aussi.`, enfance: `Une partie de son enfance se passe ${a}.` }[b.quoi];
+      if (more) return more;
+    }
     const lines = {
       naissance: [`Tout commence ici, ${a}.`],
       enfance: [`C'est ${a} qu'${F.il} passe son enfance.`],
@@ -717,7 +730,7 @@ export class Narrateur {
         for (const a of F.anecdotes) if (text.includes(fit(a.text, max).slice(0, 40))) (this.told ||= new Set()).add(a.nom);
         if (pool[1] && words(text) + words(pool[1].x) <= max) text += ' ' + pool[1].x;
         // Une fois sur trois, ou faute de phrase qui tienne : son portrait, en une phrase.
-        const portrait = F.desc ? `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '';
+        const portrait = F.desc && !/^(«|Le |La |Les |L')/.test(F.desc) ? `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '';
         const descSaid = this.used[0] === 'enigme';
         // (une anecdote, elle, n'est jamais remplacée par le portrait : c'est elle qui retient l'auditeur).
         const isStory = fitting.some((f) => text.includes(f.slice(0, 40)));
@@ -728,7 +741,7 @@ export class Narrateur {
         const veille = `${text ? 'Et a' : 'A'}ujourd'hui encore, ${F.il} veille sur ${F.patronage}.`;
         // Ce qu'il protège répond à la demande (« il aimait les animaux ») : c'est dit en premier.
         if (F.patronage && this.relevance(F.patronage) > this.relevance(text) && !(this.reserved || '').includes(F.patronage)) text = fit(`Aujourd'hui encore, ${F.il} veille sur ${F.patronage}. ${text}`, max + 2);
-        else if (F.patronage && words(text) + words(veille) <= max + 2 && this.rand() < 0.6) text = `${text} ${veille}`.trim();
+        else if (F.patronage && !(this.reserved || '').includes(F.patronage) && words(text) + words(veille) <= max + 2 && this.rand() < 0.6) text = `${text} ${veille}`.trim();
         return text;
       }
       case 'century_filter': return `Voici les saints du ${p.century}e siècle, tous réunis sur la carte.`;
