@@ -686,7 +686,7 @@ export class SanctiMaps {
     if (tab === 'jeux' && this.q('#panel.is-open .jeux .jeux__retour')) {
       await this.click(this.q('#panel.is-open .jeux .jeux__retour')); await this.clock.wait(400); return;
     }
-    const VIEW = { search: '.search', daily: '.daily', jeux: '.jeux', add: 'form.add', settings: '.settings-view' };
+    const VIEW = { search: '.search', daily: '.daily', jeux: '.jeux', add: 'form.add', settings: '.settings-view', bible: '.bible' };
     const panel = this.q('#panel');
     const here = tab === 'menu' ? panel.classList.contains('is-menu') : !!panel.querySelector(VIEW[tab]);
     if (panel.classList.contains('is-open') && here && (tab === 'menu' || !panel.classList.contains('is-menu'))) return;
@@ -697,6 +697,37 @@ export class SanctiMaps {
     await this.waitFor('panneau', () => panel.querySelector(VIEW[tab]), 5000);
     await this.clock.wait(400);
   }
+  /**
+   * Montrer une partie de l'application : le saint du jour, la Bible, la
+   * recherche, l'ajout d'une fiche, les jeux (ou un jeu précis : quiz, chaîne
+   * de saints, « Qui est-ce ? »), les réglages, ou la lettre quotidienne
+   * (l'inscription, dans les réglages : la souris la désigne, sans quitter la carte).
+   */
+  async showSection(section) {
+    const game = /^jeu-(quiz|chaine|qui)$/.exec(section || '');
+    const tab = game ? 'jeux' : section === 'lettre' ? 'settings' : section;
+    if (!['daily', 'bible', 'search', 'add', 'jeux', 'settings'].includes(tab)) return new Report('partie', false, `partie inconnue : ${section}`);
+    // Une fiche restée ouverte (le saint du jour) ne doit pas cacher la partie suivante.
+    if (this.snapshot().ficheOpen) await this.closeProfile();
+    await this.openTab(tab);
+    if (game) {
+      const btn = this.D.querySelectorAll('#panel .jeux__jeu')[{ quiz: 0, chaine: 1, qui: 2 }[game[1]]];
+      if (!btn) return new Report('jeu', false, 'jeu introuvable');
+      await this.click(btn); await this.clock.wait(700);
+      return new Report('jeu', true, btn.querySelector('.menu__name')?.textContent.trim() || game[1]);
+    }
+    if (section === 'lettre') {
+      const link = this.q('#panel a[href*="lettre/"]');
+      if (!link) return new Report('lettre', false, 'inscription à la lettre introuvable');
+      link.scrollIntoView({ block: 'center' });
+      await this.clock.wait(400);
+      await this.point(link, { press: false });
+      await this.clock.wait(500);
+      return new Report('lettre', true, 'la lettre quotidienne');
+    }
+    return new Report('partie', true, tab);
+  }
+
   async type(input, text) {
     await this.point(input);
     input.focus(); input.value = ''; input.dispatchEvent(new this.W.Event('input', { bubbles: true }));

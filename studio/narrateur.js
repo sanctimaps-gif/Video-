@@ -242,6 +242,12 @@ const TU = [
   [/\bvous montrer\b/g, 'te montrer'], [/\bvous répond\b/g, 'te répond'], [/\bvous réponde\b/g, 'te réponde'],
   [/\bque vous ne l'imaginez\b/g, "que tu ne l'imagines"], [/\bSuivez\b/g, 'Suis'], [/\bExplorez\b/g, 'Explore'],
   [/\bRetrouvez-/g, 'Retrouve-'], [/\bRetrouvez\b/g, 'Retrouve'], [/\bRegardez\b/g, 'Regarde'], [/\bRestez\b/g, 'Reste'],
+  [/\bvous montre\b/g, 'te montre'], [/\bque vous cherchez\b/g, 'que tu cherches'], [/\bVous pouvez\b/g, 'Tu peux'], [/\bVous y trouverez\b/g, 'Tu y trouveras'],
+  [/\bvous reliez\b/g, 'tu relies'], [/\bposez vos questions\b/g, 'pose tes questions'], [/\bon vous répond\b/g, 'on te répond'],
+  [/\bs'adapte à vous\b/g, "s'adapte à toi"], [/\bvous apporte\b/g, "t'apporte"], [/\brendez-vous dans\b/g, 'rends-toi dans'],
+  [/\bEt si vous appreniez\b/g, 'Et si tu apprenais'], [/\bconnaissez-vous vraiment\b/g, 'connais-tu vraiment'], [/\bTestez-vous\b/g, 'Teste-toi'],
+  [/\bPouvez-vous\b/g, 'Peux-tu'], [/\bSaurez-vous\b/g, 'Sauras-tu'], [/\bvous attendait\b/g, "t'attendait"],
+  [/\bà votre heure\b/g, 'à ton heure'], [/\bdans votre\b/g, 'dans ta'],
   [/\bvotre\b/g, 'ta'], [/\bVous croyez\b/g, 'Tu crois'], [/\bpour vous\b/g, 'pour toi'], [/\bavec vous\b/g, 'avec toi'],
 ];
 export function tutoie(text) {
@@ -311,6 +317,8 @@ export class Narrateur {
       if (a === 'frame_view') return F_hasStory(sc.shots[b.index]) ? 32 : 16;
       if (['zoom_to_place', 'pan_to_place'].includes(a)) return 15;
       if (['open_country', 'fit_country', 'open_continent'].includes(a)) return 11;
+      // Une partie de l'application : sa phrase entière (elle dit à quoi sert la partie).
+      if (['show_section', 'calendar', 'search_list', 'open_tab', 'apparitions_on'].includes(a)) return 28;
       return 12;
     });
     const facts = facts0;
@@ -331,6 +339,7 @@ export class Narrateur {
       const sh = sc.shots[beats[k].index];
       if (['show_profile', 'open_saint', 'open_list_item', 'open_marker'].includes(sh.action)) return 2;
       if (sh.action === 'frame_view' && F_hasStory(sh)) return 3;
+      if (['show_section', 'calendar'].includes(sh.action)) return 2;
       if (sh.beat?.kind === 'birth' || sh.beat?.famous) return 4;
       if (sh.action === 'frame_view') return 5;
       if (['zoom_to_place', 'pan_to_place'].includes(sh.action)) return 6;
@@ -541,6 +550,29 @@ export class Narrateur {
         { id: 'a-q', tags: ['question', 'mystere'], text: 'Lourdes, Fátima, Guadalupe : savez-vous où le ciel s\'est montré aux hommes ?' },
         { id: 'a-carte', tags: ['epique', 'question'], text: 'Saviez-vous que des apparitions sont rapportées sur presque tous les continents ? Les voici réunies sur une seule carte.' },
       ],
+      // Une partie de l'application : l'accroche part de ce qu'elle apporte.
+      sections: (() => {
+        const first = brief?.sections?.[0];
+        const n = brief?.sections?.length || 0;
+        const NUM = ['', 'une', 'deux', 'trois', 'quatre', 'cinq', 'six'];
+        const by = {
+          jeux: { id: 's-jeux', tags: ['question', 'ludique'], text: 'Et si vous appreniez les saints en jouant ? Voici les jeux de SanctiMaps.' },
+          'jeu-quiz': { id: 's-quiz', tags: ['question', 'ludique'], text: 'Combien de saints connaissez-vous vraiment ? Testez-vous avec le quiz.' },
+          'jeu-chaine': { id: 's-chaine', tags: ['question', 'ludique'], text: 'Pouvez-vous relier deux saints que tout sépare ? Voici la chaîne de saints.' },
+          'jeu-qui': { id: 's-qui', tags: ['question', 'ludique'], text: 'Un saint secret se cache. Saurez-vous le trouver ?' },
+          daily: { id: 's-jour', tags: ['question'], text: 'Savez-vous quel saint l\'Église fête aujourd\'hui ? La réponse est sur la carte.' },
+          bible: { id: 's-bible', tags: ['question'], text: 'Savez-vous quelles lectures l\'Église propose aujourd\'hui ? Elles sont dans SanctiMaps.' },
+          lettre: { id: 's-lettre', tags: ['question'], text: 'Et si chaque matin, un saint vous attendait dans votre boîte mail ?' },
+          search: { id: 's-recherche', tags: ['question'], text: 'Un saint en tête, mais pas son nom ? Voici comment le retrouver.' },
+          add: { id: 's-ajout', tags: ['question'], text: 'Un saint manque à la carte ? Vous pouvez l\'y ajouter.' },
+          settings: { id: 's-reglages', tags: ['question'], text: 'Le saint du jour, dans votre langue et à votre heure ? C\'est possible.' },
+        };
+        const list = [];
+        // Plusieurs parties : l'accroche les annonce toutes, pas seulement la première.
+        if (n > 1) list.push({ id: 's-plusieurs', tags: ['chiffre', 'question'], text: `Savez-vous tout ce que cache SanctiMaps ? En voici ${NUM[n] || n} parties.` });
+        else if (by[first]) list.push(by[first]);
+        return list;
+      })(),
       commands: [
         { id: 'd-carte', tags: ['epique', 'question'], text: `Savez-vous combien de saints tiennent sur une seule carte ? Il y en a ${many}, et voici comment les découvrir.` },
         { id: 'd-q', tags: ['question'], text: 'Et si toute l\'histoire des saints tenait dans votre poche ? C\'est exactement ce que propose SanctiMaps.' },
@@ -773,6 +805,8 @@ export class Narrateur {
       { id: 'f-carte', tags: ['ludique', 'question'], text: 'Toute la carte des saints vous attend sur SanctiMaps point F R. Pourquoi ne pas commencer aujourd\'hui ?' },
       { id: 'f-vous', tags: ['question'], text: 'Et près de chez vous, savez-vous quel saint est né ? La réponse vous attend sur SanctiMaps.' },
     ];
-    return (this.choose(opts.filter((o) => o && words(o.text) <= max + ((sc.target || 45) <= 25 ? 3 : 6)), tone) || { text: `Envie d'en savoir plus ? Retrouvez-${F?.f ? 'la' : 'le'} sur SanctiMaps.` }).text;
+    // Une présentation de l'application : une fin brève, pour laisser la voix aux parties.
+    const roomEnd = brief?.focus === 'sections' ? 12 : max + ((sc.target || 45) <= 25 ? 3 : 6);
+    return (this.choose(opts.filter((o) => o && words(o.text) <= roomEnd), tone) || { text: `Envie d'en savoir plus ? Retrouvez-${F?.f ? 'la' : 'le'} sur SanctiMaps.` }).text;
   }
 }

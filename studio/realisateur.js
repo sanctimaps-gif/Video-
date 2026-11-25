@@ -12,7 +12,7 @@
 // Il tourne entièrement dans le navigateur, sans serveur ni service extérieur :
 // c'est un moteur de règles de réalisation, pas un modèle de langage.
 import { CONTINENT_LABEL, fold } from './sanctimaps.js';
-import { ACTIONS, Planner, STYLES, parseAspect, parseCentury, parseDuration, parseStyle, splitClauses, total } from './planner.js';
+import { ACTIONS, Planner, SECTIONS, STYLES, parseAspect, parseCentury, parseDuration, parseStyle, splitClauses, total } from './planner.js';
 import { Narrateur, ideeGenerale, rng, speechSeconds, voiceWishes } from './narrateur.js';
 
 export const DEFAULT_DURATION = 45;
@@ -65,7 +65,7 @@ const DEMONYMS = [
 
 /** Ce qui ferme une fiche ouverte sur la carte. */
 const CLOSES_FICHE = new Set(['establish_world', 'back_to_world', 'open_continent', 'open_country', 'zoom_to_place', 'pan_to_place',
-  'fit_country', 'close_profile', 'frame_view', 'level_up', 'century_filter', 'calendar', 'open_tab', 'search_list']);
+  'fit_country', 'close_profile', 'frame_view', 'level_up', 'century_filter', 'calendar', 'open_tab', 'search_list', 'show_section']);
 const OPENS_FICHE = new Set(['open_saint', 'open_list_item', 'open_marker', 'open_apparition']);
 const MOTION = new Set(['establish_world', 'back_to_world', 'open_continent', 'open_country', 'zoom_to_place', 'pan_to_place',
   'fit_country', 'frame_view', 'zoom_in', 'zoom_out', 'pan', 'level_up']);
@@ -75,7 +75,7 @@ export const EMOJI = {
   pan_to_place: '📍', frame_view: '📍', zoom_in: '🔍', zoom_out: '🔍', pan: '↔️', level_up: '⤴️', open_saint: '✝️',
   open_list_item: '✝️', open_marker: '✝️', show_profile: '📖', close_profile: '📕', show_lieux: '🗺️', show_croises: '🤝',
   century_filter: '🕰️', calendar: '📅', apparitions_on: '✨', apparitions_off: '✝️', open_apparition: '✨', miracles_on: '✨',
-  search_list: '🔎', close_panel: '✖️', open_tab: '📂', press: '👆', select_option: '⚙️', type_field: '⌨️', scroll_panel: '📜',
+  search_list: '🔎', show_section: '📱', close_panel: '✖️', open_tab: '📂', press: '👆', select_option: '⚙️', type_field: '⌨️', scroll_panel: '📜',
   toggle: '📂', quiz_correct: '🎲', hold: '⏸️',
 };
 
@@ -222,6 +222,22 @@ export class Realisateur {
     if (/\b(fondu|fondus|enchaine|transitions?)\b/.test(t) || /apparitions? progressives?/.test(t)) brief.notes.push('Transitions : la vidéo est un seul plan continu ; les transitions sont des mouvements de caméra fluides (pas de fondus).');
     if (/\b(drone|3d|relief|satellite)\b/.test(t)) brief.unsupported.push('Les vues 3D ou satellite : SanctiMaps est une carte à plat.');
 
+    // Les parties de l'application à présenter (« les jeux, le saint du jour et la newsletter »), dans l'ordre cité.
+    const PARTS = [['jeu-quiz', /\bquiz\b/], ['jeu-chaine', /\bchaine (de|des) saints?\b/], ['jeu-qui', /\bqui est ce\b/],
+      ['jeux', /\b(jeux|jeu|jouer|ludique)\b/], ['daily', /\b(saints? du jour|fetes? du jour|qui est fete|fete aujourd hui)\b/],
+      ['bible', /\b(bible|messe|lectures? (du jour|de la messe)|evangile du jour|aelf)\b/], ['lettre', /\b(newsl\w*|lettre quotidienne|lettre du jour|la lettre|abonne\w*|s abonner|inscri\w* a la lettre|courriels?|e ?mails?)\b/],
+      ['search', /\b(la recherche|rechercher|moteur de recherche|chercher un saint)\b/], ['add', /\b(ajouter une fiche|proposer une fiche|contribu\w*|ajout d une fiche)\b/],
+      ['settings', /\b(parametres|reglages|mode sombre|theme sombre|changer la langue|rappels?|notifications?)\b/]];
+    brief.sections = PARTS.map(([k, re]) => { const m = re.exec(t); return m ? [m.index, k] : null; }).filter(Boolean).sort((a, b) => a[0] - b[0]).map(([, k]) => k);
+    // « les jeux » avec un jeu précis : le jeu précis suffit.
+    if (brief.sections.some((k) => k.startsWith('jeu-')) && brief.sections.includes('jeux') && !/\bjeux\b/.test(t)) brief.sections = brief.sections.filter((k) => k !== 'jeux');
+    if (brief.sections.length && !brief.sections.every((k) => k === 'daily')) brief.calendar = null;
+    // Sans durée demandée, une présentation de l'application reste courte : ~10 s par partie (le guide : pas plus long que nécessaire).
+    if (!brief.targetGiven && brief.sections.length && !brief.saints.length) {
+      const scenes = brief.sections.length + (brief.sections.length === 1 && brief.sections[0] === 'jeux' ? 1 : 0);
+      brief.target = Math.min(45, Math.max(24, 14 + 12 * scenes));
+    }
+
     // Rien de nommé (ni saint, ni lieu, ni siècle…) : on interprète la demande
     // avec les données du site (patronage, rôle, époque, prénom, mots de la fiche).
     await this.interpret(brief, text, taken);
@@ -263,7 +279,7 @@ export class Realisateur {
     const region = (brief.countries.length || brief.continents.length) && one && !brief.places.length
       ? { countries: [...brief.countries], continents: [...brief.continents] } : null;
     if (brief.saints.length || brief.places.length || ((brief.countries.length || brief.continents.length) && !region) || brief.century
-      || brief.calendar || brief.apparitions) return;
+      || brief.calendar || brief.apparitions || brief.sections?.length) return;
     const inRegion = (s) => !region || region.countries.includes(s.country) || region.continents.includes(this.data.countryById.get(s.country)?.continent);
     const saints = await this.data.saints();
     const texts = await this.data.texts();
@@ -372,6 +388,7 @@ export class Realisateur {
     if (taken.some((n) => c.includes(fold(n)))) return true;
     if (this.data.countriesIn(clause).length || brief.places.some((p) => c.includes(fold(p.name)))) return true;
     if (Object.keys(CONT_WORDS).some((w) => new RegExp(`\\b${w}\\b`).test(c))) return true;
+    if (/\b(jeux?|quiz|chaine de saints|qui est ce|saint du jour|bible|messe|lectures?|newsl\w*|lettre|abonne\w*|courriel|e ?mails?|recherche|parametres|reglages|application|appli|site|partie|rubrique|fonctionnalites?)\b/.test(c)) return true;
     return /\b(monde|planisphere|fiche|lieux|endroits|villes?|zones?|regions?|survol\w*|fondations?|tombeau|sepulture|deplacements?|parcours|vie|histoire|croises?|contemporains|siecles?|calendrier|fetes?|fete|aujourd hui|demain|saint du jour|apparitions?|termine|conclu\w*|commence\w*|introduction|intro|pays|ville|region|carte|rapproche|approche|progressivement|zoome sur|descend\w*|sur (le |la )?saint|saints? de|saints? en)\b/.test(c);
   }
 
@@ -399,13 +416,14 @@ export class Realisateur {
     const R = []; const ask = (q, a) => R.push({ q, a });
     const S = brief.saints[0];
     const lieux = S ? await this.lifePlaces(S) : [];
-    const focus = S ? 'saint' : brief.apparitions ? 'apparitions' : brief.calendar ? 'calendar' : brief.century ? 'century'
+    const focus = S ? 'saint' : brief.sections?.length && !brief.calendar ? 'sections' : brief.apparitions ? 'apparitions' : brief.calendar ? 'calendar' : brief.century ? 'century'
       : (brief.places.length || brief.countries.length || brief.continents.length) ? 'place' : brief.explicit.length ? 'commands' : 'default';
     brief.focus = focus;
     const subject = S ? `${nameOf(S)} (${lifespan(S)})${titlesOf(S).length ? ', ' + titlesOf(S).join(', ') : ''}`
       : focus === 'place' ? (brief.places[0]?.name || (brief.countries[0] && this.data.countryName(brief.countries[0])) || CONTINENT_LABEL[brief.continents[0]])
         : focus === 'calendar' ? `les saints fêtés ${brief.calendar.day === "aujourd'hui" ? "aujourd'hui" : brief.calendar.day === 'demain' ? 'demain' : 'le ' + brief.calendar.day}`
           : focus === 'century' ? `les saints du ${brief.century}e siècle${brief.countries[0] ? ' en ' + this.data.countryName(brief.countries[0]) : ''}`
+            : focus === 'sections' ? `l'application SanctiMaps : ${brief.sections.map((k) => SECTIONS[k].label.toLowerCase()).join(', ')}`
             : focus === 'apparitions' ? 'les apparitions' : focus === 'commands' ? 'une démonstration de l\'application' : 'les saints de France (demande trop vague : découverte par défaut)';
     ask('Quel est le sujet ?', cap(subject) + '.');
     if (brief.interpretation) ask('Comment ai-je compris la demande ?', brief.interpretation);
@@ -528,6 +546,10 @@ export class Realisateur {
       }
     }
 
+    // Les parties de l'application demandées : chacune montrée pour de vrai, avec sa phrase.
+    if (brief.focus === 'sections') this.sectionsTour(add, V, brief.sections);
+    else if (brief.sections?.length) this.sectionsTour(add, V, brief.sections.filter((k) => !(k === 'daily' && brief.focus === 'calendar')));
+
     // La démonstration des fonctionnalités : chaque outil du site, montré pour de vrai.
     if (brief.wants.demo) this.demoTour(add, V, S);
     // Un message demandé en cours de vidéo : un carton, juste après l'introduction.
@@ -552,7 +574,7 @@ export class Realisateur {
     const sc = this.finalize(brief, scenes, variantName, styleName);
     sc.music = !!brief.music; sc.voiceWanted = !!brief.voice; sc.structure = this.structure || null;
     // Le sujet, gardé avec le storyboard : « Améliorer » peut réécrire la voix off plus tard.
-    sc.subject = { saintId: S?.id || null, focus: brief.focus, countries: brief.countries, century: brief.century, themeQuestion: brief.themeQuestion || null };
+    sc.subject = { saintId: S?.id || null, focus: brief.focus, countries: brief.countries, century: brief.century, themeQuestion: brief.themeQuestion || null, sections: brief.sections || [] };
     await this.narrate(sc, brief);
     return sc;
   }
@@ -585,6 +607,37 @@ export class Realisateur {
     add('open_tab', { tab: 'jeux' }, { purpose: 'Fonctionnalité : les jeux', priority: 2, weight: 1,
       caption: { title: 'Des jeux', sub: 'Quiz, chaîne de saints, Qui est-ce ?' },
       narration: 'Et jouez : quiz, chaîne de saints, qui est-ce ?' });
+    add('close_panel', {}, { purpose: 'Retour à la carte', priority: 2, weight: 0.3 });
+  }
+
+  /** Chaque partie de l'application : son écran, son titre, et ce que la voix en dit (d'après les textes du site). */
+  sectionsTour(add, V, sections) {
+    const SAY = {
+      daily: 'Chaque jour, SanctiMaps vous montre le saint fêté par l\'Église, avec sa fiche.',
+      bible: 'Vous y trouverez aussi les lectures de la messe du jour, avec la Bible de l\'AELF.',
+      search: 'Un nom, un pays, un siècle ou une date : la recherche retrouve le saint que vous cherchez.',
+      add: 'Un saint manque à la carte ? Vous pouvez proposer sa fiche.',
+      jeux: 'Pour apprendre en s\'amusant, il y a les jeux : le quiz, la chaîne de saints et « Qui est-ce ? ».',
+      'jeu-quiz': 'Le quiz des saints propose trois façons de répondre, et des paliers à franchir.',
+      'jeu-chaine': 'Avec la chaîne de saints, vous reliez deux saints de lien en lien, par ce qui les unit.',
+      'jeu-qui': 'Dans « Qui est-ce ? », un saint secret se cache : posez vos questions, on vous répond par oui ou par non.',
+      settings: 'Langue, thème clair ou sombre, rappel du saint du jour : l\'application s\'adapte à vous.',
+      lettre: 'Chaque matin, la lettre quotidienne vous apporte les saints du jour. Pour la recevoir, rendez-vous dans les paramètres.',
+    };
+    for (const k of sections) {
+      const caption = { title: SECTIONS[k].label, sub: SECTIONS[k].sub };
+      if (k === 'daily') {
+        add('calendar', { day: "aujourd'hui" }, { purpose: 'Partie : le saint du jour', priority: 1, weight: 1.2, caption, narration: SAY.daily });
+        add('open_list_item', { index: 0 }, { purpose: 'Le saint fêté aujourd\'hui', priority: 1, weight: 0.8 });
+        add('show_profile', {}, { purpose: 'Sa fiche', priority: 1, weight: 1.6, minimum: 3.5 * V.reading });
+        continue;
+      }
+      add('show_section', { section: k }, { purpose: `Partie : ${SECTIONS[k].label.toLowerCase()}`, priority: 1, weight: 1.3, caption, narration: SAY[k], minimum: 2.5 });
+      // « Les jeux » en général : on ouvre aussi le quiz, pour montrer à quoi ça ressemble.
+      if (k === 'jeux' && sections.length === 1) add('show_section', { section: 'jeu-quiz' }, { purpose: 'Un jeu : le quiz', priority: 2, weight: 1, caption: { title: SECTIONS['jeu-quiz'].label, sub: SECTIONS['jeu-quiz'].sub }, narration: SAY['jeu-quiz'] });
+    }
+    // Retour à la carte, sans fiche ni panneau ouverts.
+    if (sections.at(-1) === 'daily') add('close_profile', {}, { purpose: 'Fermer la fiche', priority: 2, weight: 0.3 });
     add('close_panel', {}, { purpose: 'Retour à la carte', priority: 2, weight: 0.3 });
   }
 
@@ -715,6 +768,7 @@ export class Realisateur {
     if (brief.focus === 'century') return `Les saints du ${brief.century}e siècle`;
     if (brief.focus === 'apparitions') return 'Les apparitions';
     if (brief.focus === 'commands') return 'SanctiMaps en action';
+    if (brief.focus === 'sections') return brief.sections.length === 1 ? `SanctiMaps : ${SECTIONS[brief.sections[0]].label.toLowerCase()}` : 'Découvrez SanctiMaps';
     return 'Les saints de France';
   }
 
@@ -748,7 +802,10 @@ export class Realisateur {
     // Le guide TikTok : un texte d'accroche court, lisible dès la première image, en haut de l'écran…
     const first = sc.shots[0];
     // (complémentaire de la voix : la promesse en quelques mots, pas la phrase répétée).
-    const hookLine = sc.voice?.caption || (first?.narration || '').split(/(?<=[.!?…])\s+/)[0] || '';
+    // (présentation de l'application : « 3 parties à découvrir », ou le nom de la partie).
+    const parts = sc.subject?.sections || brief?.sections || [];
+    const sectionsCaption = sc.subject?.focus === 'sections' && parts.length ? (parts.length > 1 ? `${parts.length} parties à découvrir` : SECTIONS[parts[0]]?.label) : '';
+    const hookLine = sc.voice?.caption || sectionsCaption || (first?.narration || '').split(/(?<=[.!?…])\s+/)[0] || '';
     if (first && hookLine && hookLine.split(/\s+/).length <= 8 && !first.caption?.force) {
       first.caption = { title: hookLine, sub: first.caption?.title && first.caption.title !== hookLine ? first.caption.title : '', top: true, instant: true };
     }

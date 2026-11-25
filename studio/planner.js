@@ -15,6 +15,20 @@ export function scaled(style, speed) {
     hold: style.hold / speed, typing: style.typing * speed, speed };
 }
 
+/** Les parties de l'application qu'une vidéo peut présenter (textes tirés du site). */
+export const SECTIONS = {
+  daily: { label: 'Saint du jour', sub: 'Qui est fêté aujourd\'hui' },
+  bible: { label: 'Bible et messe', sub: 'Lectures du jour, la Bible de l\'AELF' },
+  search: { label: 'Rechercher', sub: 'Par pays, siècle, date ou nom' },
+  add: { label: 'Ajouter', sub: 'Proposer une fiche à la carte' },
+  jeux: { label: 'Jeux', sub: 'Quiz, chaîne de saints, qui est-ce ?' },
+  'jeu-quiz': { label: 'Quiz des saints', sub: 'Trois façons de répondre, quatre degrés de notoriété' },
+  'jeu-chaine': { label: 'Chaîne de saints', sub: 'D\'un saint à un autre, de lien en lien' },
+  'jeu-qui': { label: 'Qui est-ce ?', sub: 'Deviner un saint secret par oui ou par non' },
+  settings: { label: 'Paramètres', sub: 'Langue, thème, rappel, compte' },
+  lettre: { label: 'La lettre quotidienne', sub: 'Chaque matin, les saints du jour avec leur biographie' },
+};
+
 export const ACTIONS = {
   establish_world: 'Vue mondiale stable', open_continent: 'Descente vers un continent', open_country: 'Descente vers un pays',
   zoom_to_place: 'Zoom vers un lieu', pan_to_place: 'Déplacement vers un lieu', zoom_in: 'Zoom avant', zoom_out: 'Zoom arrière',
@@ -25,7 +39,7 @@ export const ACTIONS = {
   level_up: 'Remonter d\'un niveau', miracles_on: 'Mode miracles', show_lieux: 'Lieux marqués par le saint',
   show_croises: 'Saints qu\'il a pu croiser', open_marker: 'Ouverture d\'une croix de la carte', search_list: 'Recherche',
   close_panel: 'Fermeture du panneau', frame_view: 'Cadrage montré à la main', open_list_item: 'Fiche choisie dans la liste',
-  open_tab: 'Ouverture d\'un onglet', press: 'Appui sur un bouton', select_option: 'Réglage', type_field: 'Saisie',
+  open_tab: 'Ouverture d\'un onglet', show_section: 'Une partie de l\'application', press: 'Appui sur un bouton', select_option: 'Réglage', type_field: 'Saisie',
   scroll_panel: 'Défilement', toggle: 'Dépliage', quiz_correct: 'Bonne réponse au quiz',
 };
 
@@ -167,7 +181,7 @@ export class Planner {
       open_apparition: 8 / s.typing + t + 1, hold: s.hold, pan: 1.5 + s.settle,
       level_up: t + s.settle, miracles_on: 1, show_lieux: t + s.settle + 1, show_croises: t + s.settle + 1, open_marker: 2.5,
       search_list: 12 / s.typing + 1.5, close_panel: 0.6, frame_view: 1.6 + 2.6 * s.zoom + s.settle, open_list_item: t + 1,
-      open_tab: 1.4, press: 1.4, select_option: 2, type_field: 1.5, scroll_panel: 2, toggle: 1.2, quiz_correct: 3 }[action];
+      open_tab: 1.4, show_section: 2.2, press: 1.4, select_option: 2, type_field: 1.5, scroll_panel: 2, toggle: 1.2, quiz_correct: 3 }[action];
   }
 
   describe(it) {
@@ -185,6 +199,7 @@ export class Planner {
       case 'pan': return `Déplacement vers le ${{ north: 'nord', south: 'sud', east: 'est', west: 'ouest' }[p.direction] || p.direction}`;
       case 'zoom_in': return p.factor && p.factor !== 2 ? `Zoom avant ×${p.factor}` : 'Zoom avant';
       case 'search_list': return `Recherche : ${p.query}`;
+      case 'show_section': return `Partie : ${SECTIONS[p.section]?.label || p.section}`;
       case 'open_tab': return `Onglet : ${{ menu: 'menu', daily: 'Saint du jour', search: 'Rechercher', add: 'Ajouter', jeux: 'Jeux', settings: 'Paramètres' }[p.tab] || p.tab}`;
       case 'press': return `Appuie sur ${p.label ? `« ${p.label} »` : `${p.what || 'l\'élément'} n° ${(p.index ?? 0) + 1}`}`;
       case 'select_option': return `${{ language: 'Langue', theme: 'Thème', basemap: 'Fond de carte' }[p.field] || p.field} : ${p.label || p.value}`;

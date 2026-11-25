@@ -79,6 +79,15 @@ d'abord, avec un peu de hasard), en fait la question d'ouverture (« Sais-tu que
 marins ? ») et explique son choix dans sa réflexion, avec d'autres possibilités. Sans aucun indice : un saint
 différent à chaque fois, parmi les plus documentés, de préférence fêté ces jours-ci.
 
+**Présenter une partie de l'application.** « Présente les jeux », « montre le saint du jour », « comment
+s'abonner à la newsletter », « présente le quiz, la Bible et les réglages »… Le réalisateur reconnaît les
+parties de SanctiMaps citées (saint du jour, Bible et messe, recherche, ajout d'une fiche, jeux — quiz,
+chaîne de saints, « Qui est-ce ? » —, paramètres, lettre quotidienne), dans l'ordre de la demande, et les
+montre pour de vrai (action « Partie : … ») : l'écran s'ouvre, un titre et une phrase de la voix disent à
+quoi sert la partie, d'après les textes du site. Le saint du jour ouvre sa fiche ; la lettre est désignée
+dans les paramètres. Mêlées à un saint (« présente saint Martin puis montre la Bible »), les parties
+viennent après son histoire. Sans durée demandée, la vidéo dure environ 12 s par partie.
+
 **Anecdotes sourcées.** `tools/anecdotes.py` rassemble des anecdotes sur les saints, à partir des
 sources validées : **Wikipédia en français** pour le texte (seules les phrases appuyées sur une référence,
 dont le saint est le sujet, tirées des parties qui racontent sa vie, sa légende ou son culte ; lien permanent
