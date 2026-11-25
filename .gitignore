@@ -4,3 +4,4 @@ runs/
 *.mp4
 .pytest_cache/
 *.egg-info/
+tools/.anecdotes-cache.json

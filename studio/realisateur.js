@@ -595,6 +595,9 @@ export class Realisateur {
     const subject = sc.subject || {};
     const saint = brief?.saints?.[0] || (subject.saintId ? (await this.data.saints()).find((x) => x.id === subject.saintId) : null) || null;
     await n.write(sc, { brief: brief || { request: sc.request, focus: subject.focus, countries: subject.countries || [], century: subject.century }, saint, wishes });
+    // Les anecdotes venues d'ailleurs que du site : leur source, toujours citée.
+    sc.notes = (sc.notes || []).filter((x) => !x.startsWith('Anecdote :'));
+    for (const src of sc.voice?.sources || []) sc.notes.push(`Anecdote : ${src.source} (${src.url})${src.confirmed ? `, confirmée par ${src.confirmed.source} (${src.confirmed.url})` : ''}.`);
     // Une phrase plus longue que sa scène : la scène s'allonge, les autres se resserrent.
     let changed = false;
     const beats = sc.shots.map((s, i) => (s.narration ? i : -1)).filter((i) => i >= 0);

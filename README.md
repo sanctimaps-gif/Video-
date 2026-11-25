@@ -68,6 +68,16 @@ complémentaire de la voix, dès la première image en haut ; l'image bouge dans
 **sous-titres** de la voix off incrustés (case cochée par défaut) pour ceux qui regardent sans le son ; la
 musique démarre tout de suite et passe sous la voix.
 
+**Anecdotes sourcées.** `tools/anecdotes.py` rassemble des anecdotes sur les saints, à partir des
+sources validées : **Wikipédia en français** pour le texte (seules les phrases appuyées sur une référence,
+dont le saint est le sujet, tirées des parties qui racontent sa vie, sa légende ou son culte ; lien permanent
+vers la version lue, licence CC BY-SA) et **Nominis** (Église de France) pour la confirmation (son texte n'est
+pas recopié : une anecdote que sa notice corrobore est marquée « confirmée par Nominis »). Les légendes sont
+gardées mais toujours dites comme telles (« Selon la tradition… »). Le résultat (`studio/data/anecdotes/`, un
+fichier par lettre) est chargé à la demande par le narrateur : l'anecdote passe dans la fiche ou l'accroche,
+et sa source est citée sous le storyboard. Lecture lente et identifiée ; reprise automatique après coupure :
+`python3 tools/anecdotes.py --site <dossier du dépôt sanctimaps>`.
+
 **Le son.** La case **Musique d'ambiance** ajoute au MP4 une musique douce composée sur l'appareil
 (accords tenus, notes de cloche, écho ; `studio/son.js`), à la durée exacte de la vidéo, avec entrée et
 sortie en fondu : rien n'est téléchargé, aucun droit d'auteur. **🎙️ Enregistrer la voix off** ouvre un
