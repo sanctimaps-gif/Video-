@@ -806,6 +806,15 @@ export class Realisateur {
     }
     if (dropped.length) sc.notes = [...(sc.notes || []), `Retiré pour tenir ${target} s : ${dropped.join(', ')}.`];
     mins = sc.shots.map(floor);
+    // La voix off a besoin de son temps : chaque phrase garde de quoi être dite
+    // avant la suivante (sur sa scène et les scènes muettes qui la suivent).
+    const spoken = sc.shots.map((x, i) => (x.narration ? i : -1)).filter((i) => i >= 0);
+    spoken.forEach((i, k) => {
+      const end = k + 1 < spoken.length ? spoken[k + 1] : sc.shots.length;
+      const room = mins.slice(i, end).reduce((a, v) => a + v, 0);
+      const need = speechSeconds(sc.shots[i].narration) + 0.3;
+      if (need > room) mins[end - 1] += need - room;
+    });
     sc.shots.forEach((s, i) => { if (s.duration < mins[i]) s.duration = +mins[i].toFixed(1); });
     let excess = total(sc) - target;
     const longer = sc.shots.filter((s, i) => s.duration > mins[i] + 0.05);

@@ -48,6 +48,8 @@ const NO_ARTICLE = /^(israël|israel|cuba|madagascar|malte|chypre|singapour|mona
 /** « basilique Saint-Martin » → « la basilique Saint-Martin » ; un nom de ville reste tel quel. */
 export function withArticle(nom) {
   const n = String(nom || '').trim();
+  // Quelques lieux célèbres qui prennent l'article malgré leur majuscule.
+  if (/^(Sainte-Chapelle|Portioncule|Verna|Grande-Chartreuse|Chartreuse|Sorbonne|Salette|Trappe)\b/.test(n)) return `la ${n}`;
   const m = /^([a-zàâçéèêëîïôûùüÿœ]+)\b/.exec(n);
   if (!m) return n;
   const w = m[1];
@@ -55,17 +57,19 @@ export function withArticle(nom) {
   if (/^(monastère|monastere|couvent|carmel|sanctuaire|prieuré|prieure|château|chateau|palais|séminaire|seminaire|collège|college|mont|tombeau|village|hôpital|hopital|oratoire|ermitage)$/.test(w)) return `${/^[aeiouéèêâîôûh]/.test(w) ? "l'" : 'le '}${n}`;
   return n;
 }
+/** « de Antoine » → « d'Antoine ». */
+const deName = (name) => (/^[aeiouyéèêâîôûhAEIOUYÉÈÊÂÎÔÛH]/.test(name) ? `d'${name}` : `de ${name}`);
 const atPlace = (nom) => { const a = withArticle(nom); return /^le /.test(a) ? `au ${a.slice(3)}` : `à ${a}`; };
 
 export function countryGrammar(name) {
   const n = String(name || '');
   // « la Hongrie », « le Honduras » : le h des pays est aspiré.
   const vowel = /^[aeiouyéèêâîôûAEIOUYÉÈÊÂÎÔÛ]/.test(n);
-  if (NO_ARTICLE.test(n)) return { en: `${/^(cuba|madagascar|malte|chypre|singapour|monaco|haïti|haiti|bahreïn|oman|djibouti|taïwan|taiwan)/i.test(n) ? 'à' : 'en'} ${n}`, le: n };
-  if (PLURAL.test(n)) return { en: `aux ${n}`, le: `les ${n}` };
+  if (NO_ARTICLE.test(n)) return { en: `${/^(cuba|madagascar|malte|chypre|singapour|monaco|haïti|haiti|bahreïn|oman|djibouti|taïwan|taiwan)/i.test(n) ? 'à' : 'en'} ${n}`, le: n, de: vowel ? `d'${n}` : `de ${n}` };
+  if (PLURAL.test(n)) return { en: `aux ${n}`, le: `les ${n}`, de: `des ${n}` };
   const fem = /e$/i.test(n) && !MASC_E.test(n);
-  if (vowel) return { en: `en ${n}`, le: `l'${n}` };
-  return fem ? { en: `en ${n}`, le: `la ${n}` } : { en: `au ${n}`, le: `le ${n}` };
+  if (vowel) return { en: `en ${n}`, le: `l'${n}`, de: `d'${n}` };
+  return fem ? { en: `en ${n}`, le: `la ${n}`, de: `de ${n}` } : { en: `au ${n}`, le: `le ${n}`, de: `du ${n}` };
 }
 
 /**
@@ -79,8 +83,10 @@ export function fit(text, max, allowComma = false) {
   if (!text || max < 2) return '';
   if (words(text) <= max) return text;
   const sentences = text.split(/(?<=[.!?…])\s+/);
-  let out = '';
-  for (const s of sentences) { const next = out ? `${out} ${s}` : s; if (words(next) > max) break; out = next; }
+  let out = '', kept = 0;
+  for (const s of sentences) { const next = out ? `${out} ${s}` : s; if (words(next) > max) break; out = next; kept++; }
+  // Une question dont la réponse ne tient plus n'est pas posée : on la retire aussi.
+  while (kept && kept < sentences.length && /\?\s*$/.test(out)) { kept--; out = sentences.slice(0, kept).join(' '); }
   if (out || !allowComma) return out;
   const parts = sentences[0].split(/,\s+/);
   out = '';
@@ -170,13 +176,15 @@ export class Narrateur {
     const last = beats.length - 1;
     const want = beats.map((b, k) => {
       const a = sc.shots[b.index].action;
-      if (k === 0) return 18;
-      if (k === last) return 11;
-      if (['show_profile', 'open_saint', 'open_list_item', 'open_marker'].includes(a)) return 26;
-      if (a === 'frame_view') return F_hasStory(sc.shots[b.index]) ? 30 : 13;
-      if (['zoom_to_place', 'pan_to_place'].includes(a)) return 11;
-      if (['open_country', 'fit_country', 'open_continent'].includes(a)) return 6;
-      return 8;
+      // Vidéo courte : accroche et fin plus brèves, pour laisser place à l'histoire.
+      const tight = (sc.target || 45) <= 25;
+      if (k === 0) return tight ? 17 : 24;
+      if (k === last) return tight ? 11 : 18;
+      if (['show_profile', 'open_saint', 'open_list_item', 'open_marker'].includes(a)) return (sc.target || 45) >= 45 ? 40 : 30;
+      if (a === 'frame_view') return F_hasStory(sc.shots[b.index]) ? 32 : 16;
+      if (['zoom_to_place', 'pan_to_place'].includes(a)) return 15;
+      if (['open_country', 'fit_country', 'open_continent'].includes(a)) return 11;
+      return 12;
     });
     const facts = facts0;
     // Les saints présentés en chemin (« un visage du lieu ») : leurs faits aussi.
@@ -186,6 +194,8 @@ export class Narrateur {
       if (id && !this.others.has(id)) { const S2 = (await this.data.saints()).find((x) => x.id === id); if (S2) this.others.set(id, await this.facts(S2)); }
     }
     const tone = wishes.tone;
+    // Pour l'accroche d'une vidéo sur un pays : le nombre de saints que la carte y compte.
+    this.placeCount = brief?.focus === 'place' && brief.countries?.[0] ? (await this.data.saintsIn(brief.countries[0])).length : 0;
     const rank = (k) => {
       if (k === 0) return 0;
       if (k === last) return 1;
@@ -223,6 +233,13 @@ export class Narrateur {
       const tries = [texts[k], k > 0 && k < last ? this.short(sc.shots[beats[k].index], facts, left) : ''].filter(Boolean);
       const t = tries.find((x) => words(x) <= left || k === 0 || k === last);
       if (t) { keep[k] = t; left -= words(t); }
+    }
+    // L'auditeur est interpellé en cours de route aussi : sans question au
+    // milieu, la fiche (ou le premier lieu) en reçoit une.
+    if (facts && !keep.slice(1, last).some((t) => t.includes('?'))) {
+      const k = keep.findIndex((t, j) => t && j > 0 && j < last && words(t) >= 8 && !/^(Nous voici|Et c'est ici)/.test(t)
+        && ['open_saint', 'show_profile', 'frame_view'].includes(sc.shots[beats[j].index].action));
+      if (k > 0) keep[k] = `${this.pick([`Mais qui était-${facts.il} vraiment ?`, `Que sait-on de sa vie ?`, `Pourquoi se souvient-on encore ${facts.f ? "d'elle" : 'de lui'} ?`])} ${keep[k]}`;
     }
     beats.forEach((b, k) => { sc.shots[b.index].narration = keep[k]; });
     sc.voice.hook = this.used[0] || null;
@@ -292,48 +309,59 @@ export class Narrateur {
   }
 
   // ------------------------------------------------------------ l'accroche
+  //
+  // Toujours de vraies phrases (un sujet, un verbe), et une question posée à
+  // l'auditeur : c'est elle qui le retient dans les premières secondes.
 
   hook(sc, brief, F, tone, kind, max) {
     if (F) {
-      const { Il, il, e, un, name, age, ago, city, role, desc, patronage, death, born, died, feast, anecdotes } = F;
-      const descBits = desc.replace(/\.$/, '').split(/,\s+/).filter(Boolean);
+      const { Il, il, e, un, name, age, ago, city, role, desc, patronage, death, born, died, feast, anecdotes, circa } = F;
+      const portrait = desc.replace(/\.$/, '');
+      const ce = F.f ? 'cette' : /^[aeiouyéèêâîôûh]/i.test(portrait) ? 'cet' : 'ce';
+      const first = name.split(' ')[0];
+      const story = anecdotes[0] && fit(anecdotes[0].text, Math.max(10, max - 14));
       const opts = [
-        age && age <= 40 && { id: 'age', tags: ['chiffre', 'emotion', 'epique'], text: `${Il} n'avait que ${age} ans. Et pourtant, son nom a traversé les siècles. Voici l'histoire de ${name}.` },
-        descBits.length && { id: 'enigme', tags: ['question', 'mystere', 'ludique'], text: `${cap(un)} ${low(descBits.join(', '))}… Vous voyez de qui je parle ?` },
-        descBits.length >= 2 && { id: 'fragments', tags: ['epique'], text: `${descBits.map(cap).join('. ')}. Une seule vie. Celle de ${name}.` },
-        ago && city && { id: 'il-y-a', tags: ['chiffre', 'epique'], text: `Il y a ${ago} ans, à ${city}, naissait ${un} enfant ${role && !/jeune|veuve/.test(role) ? `qui deviendra ${role}` : 'dont on parle encore aujourd\'hui'}.` },
-        born != null && city && { id: 'date-lieu', tags: ['chiffre', 'mystere', 'epique'], text: `${city}. ${year(born)}. ${cap(un)} enfant vient de naître. ${Il} s'appelle ${name.split(' ')[0]}.` },
-        death && died != null && { id: 'flashback', tags: ['flashback', 'mystere', 'epique'], text: `${death.nom}, ${year(died)}. Tout s'achève ici. Mais pour comprendre, il faut revenir au tout début.` },
-        patronage && { id: 'patronage', tags: ['question', 'ludique'], text: `Qu'ont en commun ${patronage} ? Un seul nom : ${name}.` },
-        F.feastSoon && feast && { id: 'fete', tags: ['question', 'emotion'], text: `Le ${feast}, l'Église fête ${name}. Mais connaissez-vous vraiment son histoire ?` },
-        anecdotes.length && fit(anecdotes[0].text, Math.max(10, max - 7)) && { id: 'anecdote', tags: ['mystere', 'emotion'], story: anecdotes[0].nom, text: `${cap(withArticle(anecdotes[0].nom))}. ${fit(anecdotes[0].text, Math.max(10, max - 7))} Cette histoire est celle de ${name}.` },
-        role && { id: 'question-role', tags: ['question'], text: `Comment ${un} ${role} est-${il} devenu${e} saint${e} ? Voici l'histoire de ${name}.` },
+        age && age <= 40 && { id: 'age', tags: ['chiffre', 'emotion', 'question'], text: `Saviez-vous qu'${il} n'avait que ${age} ans quand ${il} est mort${e} ? Et pourtant, son nom a traversé les siècles. Voici l'histoire ${deName(name)}.` },
+        portrait && { id: 'enigme', tags: ['question', 'mystere', 'ludique'], text: `Connaissez-vous ${ce} ${low(portrait)} ? Je vais vous raconter son histoire.` },
+        ago && city && { id: 'il-y-a', tags: ['chiffre', 'epique', 'question'], text: `Il y a ${ago} ans, à ${city}, naissait ${un} enfant ${role && !/jeune|veuve/.test(role) ? `qui allait devenir ${role}` : 'dont on parle encore aujourd\'hui'}. Savez-vous de qui il s'agit ?` },
+        born != null && city && { id: 'date-lieu', tags: ['chiffre', 'mystere', 'epique', 'question'], text: `${circa ? 'Vers' : 'En'} ${year(born)}, à ${city}, naît ${un} enfant appelé${e} ${first}. Qui aurait pu deviner ce qu'${il} allait devenir ?` },
+        death && died != null && { id: 'flashback', tags: ['flashback', 'mystere', 'epique', 'question'], text: `En ${year(died)}, ${atPlace(death.nom)}, la vie ${deName(name)} s'achève. Mais savez-vous comment cette histoire a commencé ?` },
+        patronage && { id: 'patronage', tags: ['question', 'ludique'], text: `Savez-vous ce qu'ont en commun ${patronage} ? Ils ont tous ${F.f ? 'la même protectrice, et elle' : 'le même protecteur, et il'} s'appelle ${name}.` },
+        F.feastSoon && feast && { id: 'fete', tags: ['question', 'emotion'], text: `Savez-vous qui l'Église fête le ${feast} ? C'est ${name}, et son histoire mérite d'être connue.` },
+        story && { id: 'anecdote', tags: ['mystere', 'emotion', 'question'], story: anecdotes[0].nom, text: `Savez-vous ce qui s'est passé ${atPlace(anecdotes[0].nom)} ? ${story} Cette histoire, c'est celle ${deName(name)}.` },
+        role && { id: 'question-role', tags: ['question'], text: `Comment ${un} ${role} est-${il} devenu${e} saint${e} ? C'est toute l'histoire ${deName(name)}, et je vais vous la raconter.` },
       ];
-      const o = this.choose(opts.filter((x) => x && words(x.text) <= max + 4), kind || tone) || { text: `Voici l'histoire de ${name}.` };
+      const o = this.choose(opts.filter((x) => x && words(x.text) <= max + ((sc.target || 45) <= 25 ? 2 : 6)), kind || tone) || { text: `Connaissez-vous vraiment ${name} ? Voici son histoire.` };
       this.hookStory = o.story || null;
       return o.text;
     }
-    const country = brief?.countries?.[0] && this.data.countryName(brief.countries[0]);
+    const iso = brief?.countries?.[0];
+    const country = iso && this.data.countryName(iso);
+    const g = country ? countryGrammar(country) : null;
+    const n = this.placeCount;
+    const many = this.saintsCount ? `plus de ${this.saintsCount.toLocaleString('fr-FR')}` : 'des milliers de';
     const opts = {
       place: [
-        { id: 'p-q', tags: ['question'], text: `Combien de saints sont nés ${country ? 'en ' + country : 'ici'} ? Bien plus que vous ne le pensez.` },
-        { id: 'p-carte', tags: ['epique'], text: `${country || 'Cette terre'}. Des siècles de foi, des centaines de vies. Tout tient sur une seule carte.` },
-        { id: 'p-ville', tags: ['mystere'], text: 'Et si chaque ville cachait l\'histoire d\'un saint ?' },
-      ],
+        n && g && { id: 'p-q', tags: ['question', 'chiffre'], text: `Savez-vous combien de saints la carte compte ${g.en} ? Il y en a ${n.toLocaleString('fr-FR')}, et chacun a son histoire.` },
+        g && { id: 'p-ville', tags: ['mystere', 'question'], text: `Et si chaque ville ${g.de} cachait l'histoire d'un saint ? C'est exactement ce que montre cette carte.` },
+        { id: 'p-epique', tags: ['epique', 'question'], text: `Des siècles de foi et des centaines de vies tiennent sur une seule carte. Voulez-vous les découvrir avec moi ?` },
+      ].filter(Boolean),
       calendar: [
-        { id: 'c-q', tags: ['question'], text: 'Savez-vous quel saint on fête aujourd\'hui ?' },
-        { id: 'c-jour', tags: ['emotion'], text: 'Chaque jour de l\'année a son saint. Aujourd\'hui aussi.' },
+        { id: 'c-q', tags: ['question'], text: 'Savez-vous quel saint l\'Église fête aujourd\'hui ? La réponse se trouve sur la carte.' },
+        { id: 'c-jour', tags: ['emotion', 'question'], text: 'Chaque jour de l\'année a son saint. Savez-vous qui l\'on fête aujourd\'hui ?' },
       ],
       century: [
-        { id: 's-q', tags: ['question'], text: `Qui étaient les saints du ${brief?.century}e siècle ? La carte va vous le montrer.` },
-        { id: 's-epique', tags: ['epique'], text: `Le ${brief?.century}e siècle. Une époque, des visages, une seule carte.` },
+        { id: 's-q', tags: ['question'], text: `Qui étaient les saints du ${brief?.century}e siècle ? La carte va nous le montrer.` },
+        { id: 's-epique', tags: ['epique', 'question'], text: `Que reste-t-il des saints du ${brief?.century}e siècle ? Leurs noms, leurs villes, et une carte pour les retrouver.` },
       ],
       apparitions: [
-        { id: 'a-q', tags: ['question', 'mystere'], text: 'Lourdes, Fátima, Guadalupe… Où le ciel s\'est-il montré ?' },
-        { id: 'a-carte', tags: ['epique'], text: 'Des apparitions sur tous les continents. Les voici, sur une seule carte.' },
+        { id: 'a-q', tags: ['question', 'mystere'], text: 'Lourdes, Fátima, Guadalupe : savez-vous où le ciel s\'est montré aux hommes ?' },
+        { id: 'a-carte', tags: ['epique', 'question'], text: 'Saviez-vous que des apparitions sont rapportées sur presque tous les continents ? Les voici réunies sur une seule carte.' },
       ],
-      commands: [{ id: 'd-carte', tags: ['epique'], text: 'Des milliers de saints. Une seule carte. Voici SanctiMaps.' },
-        { id: 'd-q', tags: ['question'], text: 'Et si l\'histoire des saints tenait dans votre poche ?' }],
+      commands: [
+        { id: 'd-carte', tags: ['epique', 'question'], text: `Savez-vous combien de saints tiennent sur une seule carte ? Il y en a ${many}, et voici comment les découvrir.` },
+        { id: 'd-q', tags: ['question'], text: 'Et si toute l\'histoire des saints tenait dans votre poche ? C\'est exactement ce que propose SanctiMaps.' },
+      ],
     };
     const list = opts[brief?.focus] || opts.commands;
     return (this.choose(list, kind || tone) || list[0]).text;
@@ -341,78 +369,90 @@ export class Narrateur {
 
   // ------------------------------------------------------------ l'histoire
 
-  /** Une phrase courte, quand rien de plus riche ne tient dans la scène. */
+  /** Une phrase courte (mais une vraie phrase), quand rien de plus riche ne tient dans la scène. */
   short(shot, F, limit = 14) {
     const p = shot.params || {}, b = shot.beat || {};
-    if (b.kind === 'birth') return 'C\'est ici que tout commence.';
-    if (b.nom) return `${cap(withArticle(b.nom))}.`;
+    if (b.kind === 'birth') return ['date-lieu', 'il-y-a'].includes(this.used[0]) ? '' : 'C\'est ici que tout commence.';
+    if (b.nom && F) {
+      // Ce qui s'est passé là, en une phrase brève (jamais deux fois la même tournure de suite).
+      const a = atPlace(b.nom), Nom = cap(withArticle(b.nom)), il = F.il;
+      const line = {
+        naissance: `Tout commence ${a}.`, enfance: `C'est ${a} qu'${il} grandit.`, formation: `C'est ${a} qu'${il} se forme.`,
+        fondation: `C'est ${a} qu'${il} fonde l'une de ses œuvres.`, oeuvre: `C'est ${a} qu'${il} accomplit son œuvre.`,
+        residence: `C'est ${a} qu'${il} a vécu.`, predilection: `${Nom} était l'un de ses lieux préférés.`,
+        miracle: `C'est ${a} qu'on parle d'un miracle.`, mort: `Et c'est ${a} qu'${il} meurt.`, sepulture: `Aujourd'hui, ${il} repose ${a}.`,
+      }[b.quoi];
+      if (line) return line;
+      return this.pick([`Puis vient ${withArticle(b.nom)}.`, `Nous voici maintenant ${a}.`, `Arrêtons-nous ${a}.`]);
+    }
+    if (b.nom) return `Nous voici maintenant ${atPlace(b.nom)}.`;
     if (['open_saint', 'show_profile'].includes(shot.action) && F) {
       // La plus courte phrase de la fiche qui n'a pas encore été dite.
       const said = this.saidText || '';
       const bio = F.bio.filter((x) => words(x) <= limit && !said.includes(x.slice(0, 30))).sort((x, y) => words(x) - words(y))[0];
       if (bio) return bio;
-      return ['enigme', 'fragments'].includes(this.used[0]) ? '' : F.desc.replace(/\.$/, '').split(/,\s+/)[0] + '.';
+      if (['enigme'].includes(this.used[0]) || !F.desc) return '';
+      return `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, '').split(/,\s+/)[0])}.`;
     }
-    return p.place && !p.place.startsWith('@') ? `${p.place}.` : '';
+    return p.place && !p.place.startsWith('@') ? `Nous voici maintenant à ${p.place}.` : '';
   }
 
   middle(shot, sc, brief, F, tone, max, k) {
     const p = shot.params || {};
     const b = shot.beat || {};
     const country = p.country ? this.data.countryName(p.country) : '';
+    const when = F && F.born != null ? `${F.circa ? 'vers ' : 'en '}${year(F.born)}` : '';
     switch (shot.action) {
-      case 'open_continent': return this.pick(['Le voyage commence.', 'Prenons de la hauteur.']);
+      case 'open_continent': return this.pick(['Prenons un peu de hauteur avant de descendre.', 'Le voyage commence au-dessus du continent.']);
       case 'open_country': case 'fit_country': {
         if (!country) return '';
         const g = countryGrammar(country);
-        return this.pick([`Tout commence ${g.en}.`, `Direction ${g.le}.`, `Cap sur ${g.le}.`, `Nous voici ${g.en}.`]);
+        return this.pick([`Savez-vous où commence cette histoire ? Elle commence ${g.en}.`, `Notre histoire commence ${g.en}.`, `Partons ${g.en}, là où tout commence.`, `Direction ${g.le}, où tout a commencé.`]);
       }
       case 'zoom_to_place': case 'pan_to_place': {
         if (F && b.kind === 'birth') {
-          // L'accroche a déjà dit la naissance : on annonce plutôt ce qu'il deviendra.
-          if (['date-lieu', 'il-y-a'].includes(this.used[0])) {
-            const first = F.desc.replace(/\.$/, '').split(/,\s+/)[0];
-            if (first) return `Plus tard, on ${F.f ? 'la' : 'le'} connaîtra comme ${F.un} ${low(first)}.`;
-          }
+          // L'accroche a déjà dit la naissance : on se demande plutôt ce qu'il va devenir.
+          if (['date-lieu', 'il-y-a'].includes(this.used[0])) return this.pick([`Mais que va-t-${F.il} faire de sa vie ?`, `Qui pouvait imaginer, à ${b.place}, le destin de cet${F.f ? 'te' : ''} enfant ?`]);
           return this.pick([
-            `${b.place}${F.born != null ? ', ' + (F.circa ? 'vers ' : '') + year(F.born) : ''}. ${F.Il} y voit le jour.`,
-            `C'est à ${b.place} que tout commence${F.born != null ? ', ' + (F.circa ? 'vers ' : 'en ') + year(F.born) : ''}.`,
+            `Savez-vous où ${F.il} est né${F.e} ? C'est à ${b.place}${when ? ', ' + when : ''}.`,
+            `C'est à ${b.place} qu'${F.il} voit le jour${when ? ', ' + when : ''}.`,
+            `Tout commence à ${b.place}${when ? ', ' + when : ''}, le jour de sa naissance.`,
           ]);
         }
-        if (b.famous) return this.pick([`${p.place}, la ville de ${b.famous}.`, `Direction ${p.place}, où est né${b.famousF ? 'e' : ''} ${b.famous}.`]);
-        return p.place && !p.place.startsWith('@') ? this.pick([`Direction ${p.place}.`, `Puis ${p.place}.`]) : '';
+        if (b.famous) return this.pick([`Savez-vous quel saint est né à ${p.place} ? C'est ${b.famous}.`, `À ${p.place}, c'est ${b.famous} qui a vu le jour.`]);
+        return p.place && !p.place.startsWith('@') ? this.pick([`Nous voici maintenant à ${p.place}.`, `Partons ensuite pour ${p.place}.`]) : '';
       }
       case 'frame_view': {
-        if (!F) return p.near ? `${p.near}.` : '';
+        if (!F) return p.near ? `Nous voici maintenant ${atPlace(p.near)}.` : '';
         // L'anecdote déjà racontée en accroche ne revient pas.
         const story = F.anecdotes.find((a) => fold(a.nom) === fold(b.nom || p.near || '') && a.nom !== this.hookStory);
         const told = story && fit(story.text, max + 2);
-        if (told) return told;
-        const Nom = cap(withArticle(b.nom)), a = atPlace(b.nom);
-        const desc = b.desc ? low(b.desc.replace(/\.$/, '')) : '';
+        if (told) return this.rand() < 0.5 && words(told) + 6 <= max + 2 ? `Savez-vous ce qui s'est passé ${atPlace(b.nom)} ? ${told}` : told;
+        const a = atPlace(b.nom), Nom = cap(withArticle(b.nom));
+        const died = F.died != null ? `, en ${year(F.died)}` : '';
         const lines = {
-          naissance: [`Tout part d'ici : ${withArticle(b.nom)}.`],
-          enfance: [`${Nom}, les années d'enfance.`],
-          formation: [`${cap(a)}, ${F.il} se forme.`],
-          fondation: [`${cap(a)}, ${F.il} fonde ce qui lui survivra.`, `${Nom}. Une fondation qui traverse les siècles.`],
-          oeuvre: [`${Nom}, le lieu de son œuvre.`],
-          residence: [`${Nom}, où ${F.il} vit.`],
-          predilection: [`${Nom}, son lieu de prédilection.`],
-          miracle: [`${cap(a)}, on parle de miracle.`],
-          mort: [`${Nom}. C'est ici que tout s'achève${F.died != null ? ', en ' + year(F.died) : ''}.`, `Dernière étape : ${withArticle(b.nom)}.`],
-          sepulture: [`Et c'est ${a} qu'${F.il} repose aujourd'hui.`, `${Nom}, où ${F.il} repose.`],
+          naissance: [`Tout commence ici, ${a}.`],
+          enfance: [`C'est ${a} qu'${F.il} passe son enfance.`],
+          formation: [`C'est ${a} qu'${F.il} se forme.`],
+          fondation: [`C'est ${a} qu'${F.il} laisse l'une de ses fondations.`, `Savez-vous ce qu'${F.il} a fondé ${a} ? ${Nom} porte encore sa marque.`],
+          oeuvre: [`C'est ${a} qu'${F.il} accomplit son œuvre.`],
+          residence: [`C'est ${a} qu'${F.il} a vécu.`],
+          predilection: [`${Nom} était l'un de ses lieux préférés.`],
+          miracle: [`C'est ${a} qu'on parle encore d'un miracle.`],
+          mort: [`Et c'est ${a} que tout s'achève${died}.`, `Savez-vous où ${F.il} meurt ? C'est ${a}${died}.`],
+          sepulture: [`Et savez-vous où ${F.il} repose aujourd'hui ? C'est ${a}.`, `Aujourd'hui, ${F.il} repose ${a}.`],
         };
-        return this.pick(lines[b.quoi] || [`${Nom}${desc ? ', ' + desc : ''}.`]);
+        return this.pick(lines[b.quoi] || [`Nous voici maintenant ${a}.`]);
       }
-      case 'show_lieux': return F ? this.pick([`Suivez ses pas, lieu après lieu.`, `Voici les lieux qui ont marqué sa vie.`]) : '';
-      case 'show_croises': return F ? this.pick([`Et ${F.il} n'était pas seul${F.e}.`, `Sur sa route, d'autres saints.`]) : '';
+      case 'show_lieux': return F ? this.pick([`Voulez-vous voir les lieux qui ont marqué sa vie ? Les voici.`, `Et si nous suivions ses pas, lieu après lieu ?`]) : '';
+      case 'show_croises': return F ? this.pick([`Mais ${F.il} n'était pas seul${F.e} : savez-vous qui ${F.il} a pu croiser ?`, `Sur sa route, d'autres saints l'ont peut-être croisé${F.e}.`]) : '';
       case 'open_saint': case 'show_profile': case 'open_list_item': case 'open_marker': {
         const G = this.others.get(shot.beat?.saintId);
         if (!F && G) {
           const bit = G.desc.replace(/\.$/, '').split(/,\s+/)[0];
-          return this.pick([`Parmi eux, ${G.name}${bit ? ' : ' + low(bit) : ''}.`, `Un visage parmi d'autres : ${G.name}${bit ? ', ' + low(bit) : ''}.`]);
+          return this.pick([`Avez-vous déjà entendu parler ${deName(G.name)} ?${bit ? ` C'était ${G.un} ${low(bit)}.` : ''}`, `Parmi eux, il y a ${G.name}${bit ? `, ${G.un} ${low(bit)}` : ''}.`]);
         }
-        if (!F) return shot.caption?.title ? `Voici ${shot.caption.title}.` : '';
+        if (!F) return shot.caption?.title ? `Voici maintenant ${shot.caption.title}.` : '';
         // La vie, racontée : une ou deux phrases de la fiche, puis ce qu'il protège.
         const used = sc.shots.map((s) => s.narration || '').join(' ');
         // Les phrases qui racontent (il part, fonde, affirme, partage…) passent avant l'état civil.
@@ -422,20 +462,22 @@ export class Narrateur {
           .sort((a, b) => b.score - a.score);
         let text = pool[0]?.x || '';
         if (pool[1] && words(text) + words(pool[1].x) <= max) text += ' ' + pool[1].x;
-        // Une fois sur trois, ou faute de phrase qui tienne : le portrait de la fiche, en une phrase.
-        const portrait = F.desc ? `On ${F.f ? 'la' : 'le'} connaît comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '';
-        const descSaid = ['enigme', 'fragments'].includes(this.used[0]);
+        // Une fois sur trois, ou faute de phrase qui tienne : son portrait, en une phrase.
+        const portrait = F.desc ? `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '';
+        const descSaid = this.used[0] === 'enigme';
         if ((!text || this.rand() < 0.35) && !descSaid && portrait && words(portrait) <= max + 2) text = portrait;
-        if (!text && !descSaid) text = fit(F.desc.replace(/,\s+/g, '. ').replace(/\.\s*([a-zà-ÿ])/g, (m, c) => '. ' + c.toUpperCase()), max);
-        const veille = `Aujourd'hui encore, ${F.il} veille sur ${F.patronage}.`;
-        if (F.patronage && words(text) + words(veille) <= max + 2 && this.rand() < 0.7) text = `${text} ${veille}`.trim();
+        // Une question pour relancer l'attention avant la fiche.
+        const ask = this.pick([`Mais qui était-${F.il} vraiment ?`, `Que sait-on de sa vie ?`, `Pourquoi se souvient-on encore ${F.f ? "d'elle" : 'de lui'} ?`]);
+        if (text && words(ask) + words(text) <= max + 2 && this.rand() < 0.6) text = `${ask} ${text}`;
+        const veille = `${text ? 'Et a' : 'A'}ujourd'hui encore, ${F.il} veille sur ${F.patronage}.`;
+        if (F.patronage && words(text) + words(veille) <= max + 2 && this.rand() < 0.6) text = `${text} ${veille}`.trim();
         return text;
       }
-      case 'century_filter': return `Le ${p.century}e siècle, sur la carte.`;
-      case 'calendar': return this.base.get(shot) || 'Le calendrier des saints, jour après jour.';
-      case 'apparitions_on': return this.base.get(shot) || 'Place aux apparitions.';
-      case 'search_list': return this.base.get(shot) || 'Un nom, et la carte vous répond.';
-      case 'open_tab': return this.base.get(shot) || 'Et pour aller plus loin : des jeux.';
+      case 'century_filter': return `Voici les saints du ${p.century}e siècle, tous réunis sur la carte.`;
+      case 'calendar': return this.base.get(shot) || 'Voici le calendrier des saints : chaque jour, l\'Église en fête un.';
+      case 'apparitions_on': return this.base.get(shot) || 'Passons maintenant aux apparitions.';
+      case 'search_list': return this.base.get(shot) || 'Il suffit de taper un nom pour que la carte vous réponde.';
+      case 'open_tab': return this.base.get(shot) || 'Et pour aller plus loin, il y a même des jeux.';
       default: return this.base.get(shot) || (shot.caption?.title && shot.caption.force ? shot.caption.title : '');
     }
   }
@@ -448,13 +490,13 @@ export class Narrateur {
     const many = this.saintsCount ? `plus de ${this.saintsCount.toLocaleString('fr-FR')}` : 'des milliers de';
     const who = F?.name;
     const opts = [
-      who && { id: 'f-histoire', tags: ['emotion', 'mystere'], text: `L'histoire complète de ${who} vous attend sur SanctiMaps.` },
-      { id: 'f-nombre', tags: ['epique'], text: `Et ce n'est qu'un début : ${many} saints vous attendent sur SanctiMaps.` },
-      { id: 'f-prochain', tags: ['question', 'ludique'], text: 'Qui sera le prochain ? Rendez-vous sur SanctiMaps.' },
-      who && { id: 'f-pas', tags: ['epique', 'emotion'], text: `Suivez les pas de ${who}, sur SanctiMaps.` },
-      { id: 'f-carte', tags: ['ludique'], text: 'Explorez la carte des saints : SanctiMaps point F R.' },
-      { id: 'f-vous', tags: ['question'], text: 'Et près de chez vous, quel saint est né ? La réponse est sur SanctiMaps.' },
+      who && { id: 'f-histoire', tags: ['emotion', 'mystere', 'question'], text: `Voulez-vous connaître toute l'histoire ${deName(who)} ? Elle vous attend sur SanctiMaps.` },
+      { id: 'f-nombre', tags: ['epique', 'question'], text: `Et ce n'est qu'un début : ${many} saints vous attendent sur SanctiMaps. Lequel découvrirez-vous en premier ?` },
+      { id: 'f-prochain', tags: ['question', 'ludique'], text: 'Et vous, quel saint allez-vous découvrir maintenant ? Rendez-vous sur SanctiMaps.' },
+      who && { id: 'f-pas', tags: ['epique', 'emotion', 'question'], text: `Jusqu'où ses pas vont-ils vous mener ? Suivez ${who} sur SanctiMaps.` },
+      { id: 'f-carte', tags: ['ludique', 'question'], text: 'Toute la carte des saints vous attend sur SanctiMaps point F R. Pourquoi ne pas commencer aujourd\'hui ?' },
+      { id: 'f-vous', tags: ['question'], text: 'Et près de chez vous, savez-vous quel saint est né ? La réponse vous attend sur SanctiMaps.' },
     ];
-    return (this.choose(opts.filter((o) => o && words(o.text) <= max + 3), tone) || { text: `Retrouvez-${F?.f ? 'la' : 'le'} sur SanctiMaps.` }).text;
+    return (this.choose(opts.filter((o) => o && words(o.text) <= max + ((sc.target || 45) <= 25 ? 3 : 6)), tone) || { text: `Envie d'en savoir plus ? Retrouvez-${F?.f ? 'la' : 'le'} sur SanctiMaps.` }).text;
   }
 }
