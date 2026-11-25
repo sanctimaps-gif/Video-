@@ -43,7 +43,8 @@ export async function composeMusic(seconds, sampleRate = RATE) {
   const ctx = new OfflineAudioContext(2, length, sampleRate);
   const master = ctx.createGain();
   // Entrée et sortie en fondu : la musique ne commence ni ne s'arrête net.
-  const fadeIn = Math.min(2, seconds / 4), fadeOut = Math.min(3, seconds / 3);
+  // Le son démarre tout de suite (pas de long fondu : les premières secondes comptent), et s'éteint doucement.
+  const fadeIn = Math.min(0.25, seconds / 4), fadeOut = Math.min(3, seconds / 3);
   master.gain.setValueAtTime(0, 0);
   master.gain.linearRampToValueAtTime(1.1, fadeIn);
   master.gain.setValueAtTime(1.1, Math.max(fadeIn, seconds - fadeOut));

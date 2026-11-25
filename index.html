@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SanctiMaps Vidéo">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="stylesheet" href="studio/studio.css?v=20261125a">
+<link rel="stylesheet" href="studio/studio.css?v=20261125b">
 </head>
 <body>
 <div class="resume-modal" id="resume" hidden role="dialog" aria-modal="true" aria-labelledby="resume-title">
@@ -30,7 +30,7 @@
   <img class="logo" src="studio/icons/logo-256.png" alt="SanctiMaps.fr" width="56" height="56">
   <div>
     <h1>Studio vidéo SanctiMaps</h1>
-    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme. <span class="version">version 2026-11-25 a</span></div>
+    <div class="sub">Décrivez la vidéo ; le studio pilote la carte et la filme. <span class="version">version 2026-11-25 b</span></div>
   </div>
 </header>
 
@@ -63,6 +63,7 @@
       <label class="check"><input type="checkbox" id="cursor" checked> Souris à l'écran (elle se déplace et clique comme une personne)</label>
       <label class="check"><input type="checkbox" id="music"> Musique d'ambiance (composée par le studio, ajoutée à la vidéo)</label>
       <label class="check"><input type="checkbox" id="ai-voice" checked> Voix off IA sur chaque vidéo (voix de conteur ElevenLabs)</label>
+      <label class="check"><input type="checkbox" id="subtitles" checked> Sous-titres de la voix off (pour ceux qui regardent sans le son)</label>
       <details class="voice-setup" id="voice-setup">
         <summary>🎙️ Réglages de la voix off IA <span id="el-badge"></span></summary>
         <ol class="hint">
@@ -246,17 +247,17 @@
 
 <!-- Chaque mise à jour change ce numéro : Safari recharge alors tous les modules au lieu de garder les anciens. -->
 <script type="importmap">{"imports": {
-  "./studio/director.js": "./studio/director.js?v=20261125a",
-  "./studio/keepalive.js": "./studio/keepalive.js?v=20261125a",
-  "./studio/library.js": "./studio/library.js?v=20261125a",
-  "./studio/planner.js": "./studio/planner.js?v=20261125a",
-  "./studio/recorder.js": "./studio/recorder.js?v=20261125a",
-  "./studio/render.js": "./studio/render.js?v=20261125a",
-  "./studio/sanctimaps.js": "./studio/sanctimaps.js?v=20261125a",
-  "./studio/realisateur.js": "./studio/realisateur.js?v=20261125a",
-  "./studio/son.js": "./studio/son.js?v=20261125a",
-  "./studio/narrateur.js": "./studio/narrateur.js?v=20261125a",
-  "./studio/voix.js": "./studio/voix.js?v=20261125a"
+  "./studio/director.js": "./studio/director.js?v=20261125b",
+  "./studio/keepalive.js": "./studio/keepalive.js?v=20261125b",
+  "./studio/library.js": "./studio/library.js?v=20261125b",
+  "./studio/planner.js": "./studio/planner.js?v=20261125b",
+  "./studio/recorder.js": "./studio/recorder.js?v=20261125b",
+  "./studio/render.js": "./studio/render.js?v=20261125b",
+  "./studio/sanctimaps.js": "./studio/sanctimaps.js?v=20261125b",
+  "./studio/realisateur.js": "./studio/realisateur.js?v=20261125b",
+  "./studio/son.js": "./studio/son.js?v=20261125b",
+  "./studio/narrateur.js": "./studio/narrateur.js?v=20261125b",
+  "./studio/voix.js": "./studio/voix.js?v=20261125b"
 }}</script>
   <div class="prompter" id="prompter" hidden role="dialog" aria-modal="true" aria-labelledby="prompter-title">
     <div class="prompter-box">
@@ -276,6 +277,6 @@
       <p class="hint">Lisez le texte affiché : il change au moment exact où la scène change dans la vidéo. Le micro s'arrête tout seul à la fin.</p>
     </div>
   </div>
-<script type="module" src="studio/app.js?v=20261125a"></script>
+<script type="module" src="studio/app.js?v=20261125b"></script>
 </body>
 </html>

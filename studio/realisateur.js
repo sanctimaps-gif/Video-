@@ -13,7 +13,7 @@
 // c'est un moteur de règles de réalisation, pas un modèle de langage.
 import { CONTINENT_LABEL, fold } from './sanctimaps.js';
 import { ACTIONS, Planner, STYLES, parseAspect, parseCentury, parseDuration, parseStyle, splitClauses, total } from './planner.js';
-import { Narrateur, rng, speechSeconds, voiceWishes } from './narrateur.js';
+import { Narrateur, ideeGenerale, rng, speechSeconds, voiceWishes } from './narrateur.js';
 
 export const DEFAULT_DURATION = 45;
 
@@ -129,6 +129,20 @@ export class Realisateur {
       brief.saints.push(found.saint); taken.push(name);
       const homonyms = (await this.data.saints()).filter((s) => fold(nameOf(s)).split(' ')[0] === fold(name).split(' ')[0]).length;
       if (homonyms > 1 && found.score < 100) brief.notes.push(`« ${name} » : ${homonyms} saints portent ce nom dans SanctiMaps ; le plus documenté est retenu : ${nameOf(found.saint)}.`);
+    }
+    // Un saint nommé n'importe où dans la phrase (« Comment Jeanne d'Arc est-elle morte ? ») :
+    // on cherche les noms du site eux-mêmes dans la demande, le plus long d'abord.
+    if (!brief.saints.length) {
+      const t2 = ` ${fold(text)} `;
+      const texts = await this.data.texts();
+      let best = null;
+      for (const s of await this.data.saints()) {
+        const n = fold(nameOf(s));
+        if (n.length < 6 || !n.includes(' ') || !t2.includes(` ${n} `)) continue;
+        const score = n.length * 10 + (texts[s.id]?.bio?.fr ? 5 : 0);
+        if (!best || score > best.score) best = { s, n, score };
+      }
+      if (best) { brief.saints.push(best.s); taken.push(nameOf(best.s)); }
     }
     // Les mots d'un nom de saint ne sont pas des lieux (« Élisabeth de Hongrie », « Saint-Louis »).
     let rest = text;
@@ -260,6 +274,16 @@ export class Realisateur {
           : focus === 'century' ? `les saints du ${brief.century}e siècle${brief.countries[0] ? ' en ' + this.data.countryName(brief.countries[0]) : ''}`
             : focus === 'apparitions' ? 'les apparitions' : focus === 'commands' ? 'une démonstration de l\'application' : 'les saints de France (demande trop vague : découverte par défaut)';
     ask('Quel est le sujet ?', cap(subject) + '.');
+    // L'idée générale : ce que la vidéo veut faire comprendre, pas seulement ce qu'elle montre.
+    const idea = ideeGenerale(brief.request);
+    brief.idea = idea;
+    const ANGLE_LABEL = { jeunesse: 'sa jeunesse', courage: 'son courage', mort: 'sa mort et ce qu\'il en reste', miracle: 'le merveilleux de sa vie',
+      voyage: 'son parcours, lieu après lieu', charite: 'sa charité', protection: 'ceux qu\'il protège', fondation: 'ce qu\'il a fondé', foi: 'sa foi' };
+    ask('Quelle est l\'idée générale ?', idea.question ? `Répondre à la question : « ${idea.question} » — posée dès l'accroche, la réponse arrive à la fin.`
+      : idea.angles.length ? `Raconter ${idea.angles.map((a) => ANGLE_LABEL[a]).join(', puis ')} : l'accroche, les phrases de la fiche et la fin vont dans ce sens.`
+        : 'Donner envie de découvrir ce saint sur SanctiMaps : une accroche forte, une histoire, une révélation à la fin.');
+    ask('Pour qui ?', `${{ enfants: 'Des enfants : phrases simples, ton ludique', jeunes: 'Des jeunes, sur les réseaux : rythme rapide', visiteurs: 'Des visiteurs : les lieux d\'abord', tous: 'Tout le monde, sur les réseaux : droit au but' }[idea.audience]} ; ${idea.tu ? 'on tutoie l\'auditeur' : 'on vouvoie l\'auditeur (demandé)'}.`);
+    ask('Comment retenir l\'auditeur ?', 'Première phrase de moins de 10 mots qui ouvre une question, texte d\'accroche à l\'écran dès la première image, l\'image bouge dans les 2 premières secondes, la meilleure révélation gardée pour la fin, et une fin qui relance.');
     if (S) {
       const texts = await this.data.texts();
       ask('Quel saint est concerné ?', `${nameOf(S)} — ${texts[S.id]?.desc?.fr || 'fiche SanctiMaps'}`);
@@ -581,6 +605,18 @@ export class Realisateur {
       if (need > span + 0.1) { sc.shots[i].minimum = Math.max(sc.shots[i].minimum || 0, sc.shots[i].duration + need - span); changed = true; }
     });
     if (changed) this.fitTiming(sc, sc.target);
+    // Le guide TikTok : un texte d'accroche court, lisible dès la première image, en haut de l'écran…
+    const first = sc.shots[0];
+    // (complémentaire de la voix : la promesse en quelques mots, pas la phrase répétée).
+    const hookLine = sc.voice?.caption || (first?.narration || '').split(/(?<=[.!?…])\s+/)[0] || '';
+    if (first && hookLine && hookLine.split(/\s+/).length <= 8 && !first.caption?.force) {
+      first.caption = { title: hookLine, sub: first.caption?.title && first.caption.title !== hookLine ? first.caption.title : '', top: true, instant: true };
+    }
+    // … et une image qui bouge dans les deux premières secondes : la vue du monde ne s'attarde pas.
+    if (first?.action === 'establish_world' && sc.shots[1] && first.duration > 2.2 && !sc.voice?.verbatim) {
+      const extra = first.duration - 2.2; first.duration = 2.2;
+      sc.shots[1].duration = +(sc.shots[1].duration + extra).toFixed(1);
+    }
     return sc;
   }
 

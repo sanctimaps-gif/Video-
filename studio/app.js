@@ -28,7 +28,7 @@ const ui = {
   demo: $('#demo'), demoList: $('#demo-list'), demoAll: $('#demo-all'), demoEmpty: $('#demo-empty'),
   music: $('#music'), voice: $('#voice'), voiceState: $('#voice-state'),
   aiVoice: $('#ai-voice'), elVoice: $('#el-voice'), elKey: $('#el-key'), elTest: $('#el-test'), elState: $('#el-state'), elBadge: $('#el-badge'),
-  voiceSetup: $('#voice-setup'), listen: $('#listen'),
+  voiceSetup: $('#voice-setup'), listen: $('#listen'), subtitles: $('#subtitles'),
 };
 
 // ------------------------------------------------------- voix off IA
@@ -121,6 +121,8 @@ async function prepareVoice(job, scn) {
 }
 // L'instant où commence chaque scène pendant le tournage (en images) : la voix s'y cale.
 let shotStarts = null;
+// Les phrases lues (durée par scène) : les sous-titres s'affichent pendant qu'elles sont dites.
+let subtitleClips = null;
 
 const clock = new Clock();
 const keepAlive = new KeepAlive();
@@ -218,6 +220,7 @@ async function loadStage(aspect = ui.aspect.value, styleName = ui.style.value) {
   director = new Director(sm, data, {
     onShot: (shot, rehearsal) => {
       if (!rehearsal && shotStarts && activeRenderer) shotStarts[shot.id] = activeRenderer.frames;
+      if (!rehearsal && subtitleClips && activeRenderer && subtitleClips.has(shot.id)) activeRenderer.setSubtitle(shot.narration, subtitleClips.get(shot.id));
       if (rendering) stopCheck(null, true);
       if (playingScn === scenario) markShot(shot.id, rehearsal ? 'répétition' : 'en cours');
       if (!rehearsal) showCaption(shot);
@@ -512,7 +515,8 @@ const FICHE_SHOTS = new Set(['open_saint', 'show_profile', 'show_lieux', 'show_c
 function showCaption(shot) {
   // Un message demandé (« Découvrez SanctiMaps ») s'affiche même titres décochés.
   const on = (playingScn?.captions !== false || shot.caption?.force) && shot.caption?.title;
-  const top = FICHE_SHOTS.has(shot.action);
+  // En haut : pendant une fiche, pour le texte d'accroche, et quand les sous-titres occupent le bas.
+  const top = FICHE_SHOTS.has(shot.action) || !!shot.caption?.top || !!(rendering && subtitleClips);
   if (rendering && activeRenderer) { activeRenderer.setCaption(on ? { ...shot.caption, top } : null, shot.duration); return; }
   clearTimeout(captionTimer);
   ui.caption.classList.toggle('top', top);
@@ -617,7 +621,7 @@ function newJob(scn, title) {
     // Le son : la musique composée par le studio, et la voix off enregistrée pour ce storyboard.
     music: !!ui.music.checked, voice: voiceTake?.blob || null,
     // La voix off IA (si réglée) ; une voix enregistrée soi-même passe avant.
-    aiVoice: !voiceTake && !!ui.aiVoice.checked && !scn.voice?.off };
+    aiVoice: !voiceTake && !!ui.aiVoice.checked && !scn.voice?.off, subtitles: !!ui.subtitles.checked };
 }
 
 /** « 🎬 Exporter » : la vidéo rejoint la file et se fabrique en arrière-plan. */
@@ -743,7 +747,7 @@ async function processJob(job) {
       keepAlive.update('échec du rendu', true);
     }
   } finally {
-    clock.endRender(); activeRenderer = null; cancelId = null; pauseId = null; playingScn = null; heartbeat(null);
+    clock.endRender(); activeRenderer = null; cancelId = null; pauseId = null; playingScn = null; heartbeat(null); subtitleClips = null; shotStarts = null;
     rendering = false; progress.delete(job.id);
     overlay(''); ui.progress.hidden = true; ui.caption.hidden = true;
     refresh(); renderTasks();
@@ -849,6 +853,7 @@ async function renderJob(job) {
     clock.beginRender(renderer, 30);
     const started = performance.now();
     shotStarts = {};
+    subtitleClips = job.subtitles !== false && job.voiceClips?.length ? new Map(job.voiceClips.map((c) => [c.id, c.seconds])) : null;
     try {
       await director.play(scn);
     } finally {
@@ -856,7 +861,7 @@ async function renderJob(job) {
     }
     const done = await renderer.finish();
     job.frames = done.frames; job.framesDone = done.frames; job.status = 'encoding'; job.updated = Date.now();
-    job.shotStarts = shotStarts; shotStarts = null;
+    job.shotStarts = shotStarts; shotStarts = null; subtitleClips = null;
     // La durée demandée : la vidéo filmée plus longue sera accélérée à l'assemblage pour y tenir exactement.
     job.target = scn.target || null;
     if (job.target && !job.voiceClips?.length && done.frames / 30 > job.target + 0.1) log(`Filmé : ${(done.frames / 30).toFixed(1)} s ; la vidéo est accélérée (×${(done.frames / 30 / job.target).toFixed(2)}) pour durer ${job.target} s, sans couper de scène.`);

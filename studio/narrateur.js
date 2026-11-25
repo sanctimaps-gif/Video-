@@ -57,6 +57,38 @@ export function withArticle(nom) {
   if (/^(monastère|monastere|couvent|carmel|sanctuaire|prieuré|prieure|château|chateau|palais|séminaire|seminaire|collège|college|mont|tombeau|village|hôpital|hopital|oratoire|ermitage)$/.test(w)) return `${/^[aeiouéèêâîôûh]/.test(w) ? "l'" : 'le '}${n}`;
   return n;
 }
+/**
+ * Certaines anecdotes du site commencent sans verbe principal (« Le carmel où
+ * elle entra à quinze ans… ») : pour la voix, elles deviennent une vraie
+ * phrase (« Voici le carmel où elle entra à quinze ans… »).
+ */
+function asSentence(text) {
+  const t = String(text || '').trim();
+  const first = t.split(/(?<=[.!?])\s+/)[0] || '';
+  const head = first.split(/,/)[0];
+  // (\b ne connaît pas les accents : « où » se repère entre espaces.)
+  const REL = /(?:^|\s)(?:où|qui|que|dont)(?=\s|$)/;
+  if (/^(Le|La|Les|L')\s?\S/.test(first) && REL.test(head) && !/(?:^|\s)(?:est|sont|fut|furent|était|a|ont)(?=\s|$)/.test(head.split(REL)[0])) {
+    return `Voici ${low(t)}`;
+  }
+  return t;
+}
+
+/**
+ * Une anecdote dite loin de son lieu : « Il y meurt… » devient « À Candes, il
+ * meurt… » — une seule phrase, qui dit où l'on est et qu'on ne peut pas couper.
+ */
+function placed(nom, t) {
+  if (!t || !/(?:^|\s)(?:y|ici|là)(?=\s|[,.])/.test(t)) return t;
+  const [first, ...rest] = t.split(/(?<=[.!?])\s+/);
+  if (/(?:^|\s)(?:il|elle|ils|elles|on) y(?=\s)/i.test(first)) {
+    const body = first.replace(/(^|\s)(il|elle|ils|elles|on) y(?=\s)/i, '$1$2');
+    const lowered = /^(Il|Elle|Ils|Elles|On|C'est|Le|La|Les|Un|Une|Sa|Son|Ses|Soldat|Jeune|Enfant)\b/.test(body) ? low(body) : body;
+    return [`${cap(atPlace(nom))}, ${lowered}`, ...rest].join(' ');
+  }
+  return `Nous sommes ${atPlace(nom)}. ${t}`;
+}
+
 /** « de Antoine » → « d'Antoine ». */
 const deName = (name) => (/^[aeiouyéèêâîôûhAEIOUYÉÈÊÂÎÔÛH]/.test(name) ? `d'${name}` : `de ${name}`);
 const atPlace = (nom) => { const a = withArticle(nom); return /^le /.test(a) ? `au ${a.slice(3)}` : `à ${a}`; };
@@ -86,7 +118,7 @@ export function fit(text, max, allowComma = false) {
   let out = '', kept = 0;
   for (const s of sentences) { const next = out ? `${out} ${s}` : s; if (words(next) > max) break; out = next; kept++; }
   // Une question dont la réponse ne tient plus n'est pas posée : on la retire aussi.
-  while (kept && kept < sentences.length && /\?\s*$/.test(out)) { kept--; out = sentences.slice(0, kept).join(' '); }
+  while (kept && kept < sentences.length && (/\?\s*$/.test(out) || /^Nous sommes\b/.test(sentences[kept - 1]))) { kept--; out = sentences.slice(0, kept).join(' '); }
   if (out || !allowComma) return out;
   const parts = sentences[0].split(/,\s+/);
   out = '';
@@ -123,7 +155,75 @@ export function voiceWishes(request) {
   else if (/\b(commence|debute|ouvre|accroche)\w*\b[^.]{0,30}\b(chiffre|date|annee|age)\b/.test(t)) w.hook = 'chiffre';
   else if (/\b(commence|debute|ouvre|accroche)\w*\b[^.]{0,30}\b(fin|mort|deces)\b/.test(t)) w.hook = 'flashback';
   if (/\b(sans|pas d) (appel|invitation|publicite|pub)\b/.test(t)) w.cta = false;
+  Object.assign(w, ideeGenerale(text));
   return w;
+}
+
+// Les angles qu'une demande peut donner à une vie de saint : chacun oriente
+// l'accroche, les phrases choisies dans la fiche et la révélation de la fin.
+const ANGLES = {
+  jeunesse: { re: /\b(jeune|jeunesse|ado\w*|adolescen\w*|si jeune|a \d+ ans|tres tot|enfance)\b/, words: ['ans', 'jeune', 'enfant', 'âge', 'treize', 'quinze', 'dix-neuf', 'vingt'], label: 'sa jeunesse' },
+  courage: { re: /\b(courag\w*|combat\w*|guerr\w*|bataill\w*|hero\w*|bravoure|resist\w*|force|audace|lutt\w*)\b/, words: ['délivr', 'guerre', 'siège', 'combat', 'armée', 'mission', 'affirme', 'refuse', 'résist'], label: 'son courage' },
+  mort: { re: /\b(morte?s?|meur\w*|mourir|mourut|martyr\w*|bucher|brule\w*|supplice|tombeau|sepulture|reliques?|deces)\b/, words: ['mort', 'meurt', 'mourut', 'bûcher', 'brûlé', 'martyr', 'tombeau', 'repose', 'reliques'], label: 'sa mort et ce qu\'il en reste' },
+  miracle: { re: /\b(miracles?|prodiges?|merveill\w*|guerison\w*|stigmates|apparitions?|visions?|voix)\b/, words: ['miracle', 'vision', 'voix', 'stigmates', 'apparu', 'fleurirent', 'guéri'], label: 'le merveilleux de sa vie' },
+  voyage: { re: /\b(voyag\w*|parcours|chemins?|traces?|pas|itineraire|lieux|traverse\w*|route)\b/, words: ['part', 'quitte', 'voyage', 'route', 'traverse', 'rejoint'], label: 'son parcours' },
+  charite: { re: /\b(charite|pauvres?|partag\w*|manteau|humble|humilite|pauvrete|aide\w*|genero\w*|soign\w*|malades?)\b/, words: ['pauvre', 'partag', 'manteau', 'pauvreté', 'charité', 'soign', 'malade', 'humble', 'mendiant', 'donn', 'aumône'], label: 'sa charité' },
+  protection: { re: /\b(patron\w*|protect\w*|invoqu\w*|prier|prie|intercession)\b/, words: ['patron', 'veille', 'protège'], label: 'ceux qu\'il protège' },
+  fondation: { re: /\b(fond\w*|ordre|monasteres?|abbayes?|construi\w*|bati\w*|batisseur|oeuvre)\b/, words: ['fonde', 'fonda', 'ordre', 'bâtisseur', 'construit', 'abbaye', 'monastère'], label: 'ce qu\'il a fondé' },
+  foi: { re: /\b(vocation|appel|conversion|convert\w*|foi|priere|mystique|dieu)\b/, words: ['convertit', 'foi', 'prière', 'mystique', 'vocation', 'entre', 'carmel'], label: 'sa foi' },
+};
+const STOP = new Set(['le', 'la', 'les', 'un', 'une', 'des', 'de', 'du', 'd', 'l', 'et', 'ou', 'a', 'au', 'aux', 'en', 'sur', 'pour', 'par', 'avec', 'sans', 'dans', 'que', 'qui', 'quoi', 'son', 'sa', 'ses', 'ce', 'cette', 'il', 'elle', 'est', 'fais', 'fait', 'faire', 'cree', 'creer', 'moi', 'video', 'videos', 'secondes', 'seconde', 'minute', 'minutes', 'montre', 'montrer', 'raconte', 'raconter', 'saint', 'sainte', 'saints', 'vie', 'histoire', 'tiktok', 'reel', 'short', 'format', 'vertical', 'verticale', 'horizontal', 'dynamique', 'pourquoi', 'comment', 'voix', 'off', 'musique', 'je', 'veux', 'une', 'presente', 'parle', 'parler']);
+
+/**
+ * L'idée générale d'une demande, au-delà des mots-clés : l'angle de la vidéo
+ * (courage, jeunesse, miracle, parcours…), le public, la question que se pose
+ * l'auteur, et la façon de s'adresser à l'auditeur. Tout le script s'aligne
+ * sur cette idée unique (« une seule idée par vidéo »).
+ */
+export function ideeGenerale(request) {
+  const text = String(request || '').replace(/[’`]/g, "'");
+  const t = fold(text);
+  // L'angle : le premier qui correspond à la demande, en dehors des noms propres.
+  const plain = fold(text.replace(/\b(?:saint|sainte)\s+[A-ZÉÈ][\wéèêàâîôûç'-]+(?:\s+(?:de|d'|du|la|le)\s*[A-ZÉÈ][\wéèêàâîôûç'-]+)*/g, ' '));
+  const angles = Object.entries(ANGLES).filter(([, a]) => a.re.test(plain)).map(([k]) => k);
+  const audience = /\b(enfants?|petits|ecoliers?|eleves?|classe|catechisme|caté)\b/.test(t) ? 'enfants'
+    : /\b(jeunes|ados?|adolescents?|etudiants?|lyceens?|collegiens?|tiktok|reels?|shorts?)\b/.test(t) ? 'jeunes'
+      : /\b(touristes?|visiteurs?|pelerins?|voyageurs?)\b/.test(t) ? 'visiteurs' : 'tous';
+  // Une question posée dans la demande (« pourquoi saint Martin a-t-il coupé son manteau ? ») :
+  // la vidéo l'ouvre en accroche et y répond à la fin.
+  const qm = /\b(pourquoi|comment|qui|ou|quand|quel(?:le)?s?|qu'est-ce qui|qu'est-ce que|que)\b\s+([^?.!]{6,140})\?/i.exec(text)
+    || /\b(?:explique|raconte|montre)\s+(pourquoi|comment)\s+([^?.!]{6,140})/i.exec(text);
+  let question = null;
+  if (qm) question = `${cap(qm[1].toLowerCase())} ${qm[2].trim().replace(/\s+/g, ' ')} ?`;
+  // « Une vidéo qui montre que François d'Assise aimait les animaux » : l'idée à prouver devient la question d'ouverture.
+  const claim = /\b(?:montre|montrer|prouve|prouver|explique|expliquer|raconte|raconter)\s+(?:bien\s+)?(?:que|qu')\s*([^.!?]{6,140})/i.exec(text);
+  if (!question && claim) question = `Sais-tu pourquoi on dit qu${/^[aeiouyéèêh]/i.test(claim[1].trim()) ? "'" : 'e '}${claim[1].trim().replace(/\s+/g, ' ')} ?`;
+  // Les mots qui portent l'idée : ils choisissent les phrases de la fiche qui y répondent.
+  const topic = [...new Set(plain.split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !STOP.has(w)))];
+  const tu = !/\b(vouvoi\w*|formel\w*|solennel\w*)\b/.test(t);
+  return { angles, angle: angles[0] || null, audience, question, topic, tu };
+}
+
+/**
+ * Le tutoiement (« Sais-tu… ? », « Et toi… ? ») : sur les réseaux, on parle à
+ * une personne, pas à une foule. Les textes sont écrits au vouvoiement puis
+ * convertis ; « Rendez-vous sur SanctiMaps » reste tel quel.
+ */
+const TU = [
+  [/\bSavez-vous\b/g, 'Sais-tu'], [/\bsavez-vous\b/g, 'sais-tu'], [/\bSaviez-vous\b/g, 'Savais-tu'],
+  [/\bConnaissez-vous\b/g, 'Connais-tu'], [/\bconnaissez-vous\b/g, 'connais-tu'], [/\bVoulez-vous\b/g, 'Veux-tu'],
+  [/\bAvez-vous\b/g, 'As-tu'], [/\ballez-vous\b/g, 'vas-tu'], [/\bdécouvrirez-vous\b/g, 'découvriras-tu'],
+  [/\bEt vous,/g, 'Et toi,'], [/\bchez vous\b/g, 'chez toi'], [/\bvous attendent\b/g, "t'attendent"], [/\bvous attend\b/g, "t'attend"],
+  [/\bvous raconter\b/g, 'te raconter'], [/\bvous la raconter\b/g, 'te la raconter'], [/\bvous mener\b/g, 'te mener'],
+  [/\bvous montrer\b/g, 'te montrer'], [/\bvous répond\b/g, 'te répond'], [/\bvous réponde\b/g, 'te réponde'],
+  [/\bque vous ne l'imaginez\b/g, "que tu ne l'imagines"], [/\bSuivez\b/g, 'Suis'], [/\bExplorez\b/g, 'Explore'],
+  [/\bRetrouvez-/g, 'Retrouve-'], [/\bRetrouvez\b/g, 'Retrouve'], [/\bRegardez\b/g, 'Regarde'], [/\bRestez\b/g, 'Reste'],
+  [/\bvotre\b/g, 'ta'], [/\bVous croyez\b/g, 'Tu crois'], [/\bpour vous\b/g, 'pour toi'], [/\bavec vous\b/g, 'avec toi'],
+];
+export function tutoie(text) {
+  let out = String(text || '');
+  for (const [re, by] of TU) out = out.replace(re, by);
+  return out;
 }
 
 export class Narrateur {
@@ -157,6 +257,9 @@ export class Narrateur {
     const facts0 = saint ? await this.facts(saint) : null;
     const F_hasStory = (shot) => !!facts0?.anecdotes.some((a) => fold(a.nom) === fold(shot.beat?.nom || shot.params?.near || ''));
     sc.voice = { seed: this.seed, wishes };
+    this.idea = wishes;
+    // Les mots qui portent l'idée de la demande (et ceux de son angle) : ils choisissent les phrases.
+    this.topicWords = [...(wishes.topic || []), ...(wishes.angles || []).flatMap((a) => ANGLES[a]?.words || [])].map((w) => fold(w));
     // Les phrases déjà prévues par le réalisateur (démonstration, message demandé) servent de base.
     this.base = new Map(sc.shots.map((s) => [s, s.baseNarration ?? s.narration ?? '']));
     for (const s of sc.shots) { s.baseNarration = this.base.get(s); s.narration = ''; }
@@ -187,6 +290,8 @@ export class Narrateur {
       return 12;
     });
     const facts = facts0;
+    // Les mots du nom du saint ne disent rien de l'idée (« François » ne doit pas choisir la basilique Saint-François).
+    if (facts) { const nameWords = new Set(fold(facts.name).split(/[^a-z0-9]+/)); this.topicWords = this.topicWords.filter((w) => !nameWords.has(w)); }
     // Les saints présentés en chemin (« un visage du lieu ») : leurs faits aussi.
     this.others = new Map();
     for (const s of sc.shots) {
@@ -208,6 +313,14 @@ export class Narrateur {
       if (['show_lieux', 'show_croises'].includes(sh.action)) return 7;
       return 8;
     };
+    // Le parcours numéroté (« Première étape… dernière étape ») : quand le parcours
+    // est le sujet, ou une fois sur trois s'il compte au moins trois lieux.
+    const tour = beats.map((b) => sc.shots[b.index]).filter((x) => x.action === 'frame_view');
+    this.numbered = tour.length >= 2 && (this.used.includes('nombre') || (wishes.angles || []).includes('voyage') || (tour.length >= 3 && this.rand() < 0.35));
+    this.tourIndex = new Map(tour.map((x, i) => [x, { i, n: tour.length }]));
+    // La réponse à la question de la demande est mise de côté dès le départ : elle
+    // ne sera dite qu'à la fin (et pas avant, en passant).
+    this.reserved = wishes.question && facts ? this.bestSentence(facts, '') : '';
     // 1. Chaque moment écrit sa meilleure phrase, sans se soucier de la place.
     const texts = [];
     for (const [k, b] of beats.entries()) {
@@ -230,19 +343,38 @@ export class Narrateur {
     const keep = beats.map(() => '');
     for (const k of beats.map((_, j) => j).sort((a, b) => rank(a) - rank(b) || a - b)) {
       this.saidText = keep.join(' ');
-      const tries = [texts[k], k > 0 && k < last ? this.short(sc.shots[beats[k].index], facts, left) : ''].filter(Boolean);
+      // Trop long : d'abord la même phrase sans sa question de relance, puis une plus courte.
+      const bare = k > 0 && k < last && texts[k] ? texts[k].replace(/^[^.!?]*\?\s+/, '') : '';
+      const tries = [texts[k], bare !== texts[k] && words(bare) >= 6 ? bare : '', k > 0 && k < last ? this.short(sc.shots[beats[k].index], facts, left) : ''].filter(Boolean);
       const t = tries.find((x) => words(x) <= left || k === 0 || k === last);
       if (t) { keep[k] = t; left -= words(t); }
     }
+    // Le parcours numéroté, sur les seuls lieux qui parlent vraiment (« Première étape… Et dernière étape… »).
+    if (this.numbered) {
+      const told = beats.map((b, j) => j).filter((j) => keep[j] && sc.shots[beats[j].index].action === 'frame_view' && !/^Nous (voici|revoilà|sommes)/.test(keep[j]));
+      if (told.length >= 2) told.forEach((j, n) => { keep[j] = this.step(n, told.length, keep[j]); });
+    }
     // L'auditeur est interpellé en cours de route aussi : sans question au
     // milieu, la fiche (ou le premier lieu) en reçoit une.
-    if (facts && !keep.slice(1, last).some((t) => t.includes('?'))) {
-      const k = keep.findIndex((t, j) => t && j > 0 && j < last && words(t) >= 8 && !/^(Nous voici|Et c'est ici)/.test(t)
-        && ['open_saint', 'show_profile', 'frame_view'].includes(sc.shots[beats[j].index].action));
+    if (facts && !wishes.question && !keep.slice(1, last).some((t) => t.includes('?'))) {
+      const ok = (t, j) => t && j > 0 && j < last && words(t) >= 8 && !/^(Nous |Et c'est ici|Première|Deuxième|Troisième|Quatrième|Cinquième|Et dernière|Et voici la réponse)/.test(t);
+      let k = keep.findIndex((t, j) => ok(t, j) && ['open_saint', 'show_profile'].includes(sc.shots[beats[j].index].action));
+      if (k < 0) k = keep.findIndex((t, j) => ok(t, j) && sc.shots[beats[j].index].action === 'frame_view');
       if (k > 0) keep[k] = `${this.pick([`Mais qui était-${facts.il} vraiment ?`, `Que sait-on de sa vie ?`, `Pourquoi se souvient-on encore ${facts.f ? "d'elle" : 'de lui'} ?`])} ${keep[k]}`;
     }
-    beats.forEach((b, k) => { sc.shots[b.index].narration = keep[k]; });
+    // La récompense, gardée pour la fin : la réponse à la question de la demande,
+    // juste avant l'appel final (le guide : promesse forte, mais tenue).
+    if (wishes.question && facts && last > 1) {
+      const answer = this.reserved || this.bestSentence(facts, keep.join(' '));
+      const k = keep.map((t, j) => j).filter((j) => j > 0 && j < last).pop();
+      // La scène qui porte la réponse ne sera pas retirée pour tenir la durée.
+      if (answer && k) { keep[k] = `Et voici la réponse. ${answer}`; sc.voice.answer = answer; sc.shots[beats[k].index].priority = 1; }
+    }
+    beats.forEach((b, k) => { sc.shots[b.index].narration = wishes.tu === false ? keep[k] : tutoie(keep[k]); });
+    sc.voice.idea = { angle: wishes.angle, angles: wishes.angles, audience: wishes.audience, question: wishes.question, tu: wishes.tu !== false };
     sc.voice.hook = this.used[0] || null;
+    // Le texte d'accroche à l'écran (3 à 8 mots) : il résume la promesse, sans répéter la voix.
+    sc.voice.caption = this.hookCaption(facts, wishes);
     sc.voice.used = this.used;
     return sc;
   }
@@ -304,7 +436,7 @@ export class Narrateur {
       patronage: S.patronage?.fr ? andList(low(S.patronage.fr)) : '',
       feast: feast ? `${+feast[2] === 1 ? '1er' : +feast[2]} ${MONTHS[+feast[1] - 1]}` : '',
       feastSoon: feast ? Math.abs(((new Date(now, +feast[1] - 1, +feast[2]) - new Date()) / 864e5)) < 10 : false,
-      death, grave, anecdotes: places.filter((l) => l.dit?.fr).map((l) => ({ nom: l.nom, quoi: l.quoi, text: l.dit.fr })),
+      death, grave, anecdotes: places.filter((l) => l.dit?.fr).map((l) => ({ nom: l.nom, quoi: l.quoi, text: asSentence(l.dit.fr) })),
     };
   }
 
@@ -314,24 +446,42 @@ export class Narrateur {
   // l'auditeur : c'est elle qui le retient dans les premières secondes.
 
   hook(sc, brief, F, tone, kind, max) {
+    const idea = this.idea || {};
+    // Une question posée dans la demande : c'est elle qui ouvre la vidéo, la réponse viendra à la fin.
+    if (idea.question) {
+      this.used.push('question-demande');
+      return `${idea.question} Regardez bien, la réponse arrive.`;
+    }
     if (F) {
-      const { Il, il, e, un, name, age, ago, city, role, desc, patronage, death, born, died, feast, anecdotes, circa } = F;
-      const portrait = desc.replace(/\.$/, '');
-      const ce = F.f ? 'cette' : /^[aeiouyéèêâîôûh]/i.test(portrait) ? 'cet' : 'ce';
+      const { Il, il, e, un, name, age, ago, city, role, patronage, death, born, died, feast, anecdotes, circa } = F;
       const first = name.split(' ')[0];
-      const story = anecdotes[0] && fit(anecdotes[0].text, Math.max(10, max - 14));
+      // L'anecdote qui sert le mieux l'idée de la demande (la charité → le manteau partagé).
+      const tale = [...anecdotes].sort((x, y) => this.relevance(y.text) - this.relevance(x.text))[0];
+      const story = tale && fit(tale.text, Math.max(10, max - 10));
+      const lieux = sc.shots.filter((x) => x.action === 'frame_view').length;
+      const NUM = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six'];
+      // Le premier patronage, pour viser l'auditeur (« Les soldats ont un saint protecteur »).
+      const patron = patronage ? patronage.split(/,\s*| et /)[0].trim() : '';
       const opts = [
-        age && age <= 40 && { id: 'age', tags: ['chiffre', 'emotion', 'question'], text: `Saviez-vous qu'${il} n'avait que ${age} ans quand ${il} est mort${e} ? Et pourtant, son nom a traversé les siècles. Voici l'histoire ${deName(name)}.` },
-        portrait && { id: 'enigme', tags: ['question', 'mystere', 'ludique'], text: `Connaissez-vous ${ce} ${low(portrait)} ? Je vais vous raconter son histoire.` },
-        ago && city && { id: 'il-y-a', tags: ['chiffre', 'epique', 'question'], text: `Il y a ${ago} ans, à ${city}, naissait ${un} enfant ${role && !/jeune|veuve/.test(role) ? `qui allait devenir ${role}` : 'dont on parle encore aujourd\'hui'}. Savez-vous de qui il s'agit ?` },
-        born != null && city && { id: 'date-lieu', tags: ['chiffre', 'mystere', 'epique', 'question'], text: `${circa ? 'Vers' : 'En'} ${year(born)}, à ${city}, naît ${un} enfant appelé${e} ${first}. Qui aurait pu deviner ce qu'${il} allait devenir ?` },
-        death && died != null && { id: 'flashback', tags: ['flashback', 'mystere', 'epique', 'question'], text: `En ${year(died)}, ${atPlace(death.nom)}, la vie ${deName(name)} s'achève. Mais savez-vous comment cette histoire a commencé ?` },
-        patronage && { id: 'patronage', tags: ['question', 'ludique'], text: `Savez-vous ce qu'ont en commun ${patronage} ? Ils ont tous ${F.f ? 'la même protectrice, et elle' : 'le même protecteur, et il'} s'appelle ${name}.` },
-        F.feastSoon && feast && { id: 'fete', tags: ['question', 'emotion'], text: `Savez-vous qui l'Église fête le ${feast} ? C'est ${name}, et son histoire mérite d'être connue.` },
-        story && { id: 'anecdote', tags: ['mystere', 'emotion', 'question'], story: anecdotes[0].nom, text: `Savez-vous ce qui s'est passé ${atPlace(anecdotes[0].nom)} ? ${story} Cette histoire, c'est celle ${deName(name)}.` },
-        role && { id: 'question-role', tags: ['question'], text: `Comment ${un} ${role} est-${il} devenu${e} saint${e} ? C'est toute l'histoire ${deName(name)}, et je vais vous la raconter.` },
-      ];
-      const o = this.choose(opts.filter((x) => x && words(x.text) <= max + ((sc.target || 45) <= 25 ? 2 : 6)), kind || tone) || { text: `Connaissez-vous vraiment ${name} ? Voici son histoire.` };
+        age && age <= 40 && { id: 'age', tags: ['chiffre', 'emotion', 'question'], text: `${Il} n'avait que ${age} ans à sa mort. Et pourtant, son nom a traversé les siècles. Savez-vous pourquoi ?` },
+        { id: 'contradiction', tags: ['question', 'mystere', 'ludique'], text: `Vous croyez connaître ${name} ? Regardez bien jusqu'à la fin.` },
+        { id: 'curiosite', tags: ['mystere', 'question'], text: `Voici ce que peu de gens savent sur ${name}. Restez jusqu'au bout.` },
+        ago && city && { id: 'il-y-a', tags: ['chiffre', 'epique', 'question'], text: `Il y a ${ago} ans naissait ${first}. Qui aurait pu deviner ${role && !/jeune|veuve/.test(role) ? `qu'${il} deviendrait ${role}, puis saint${e} ?` : 'son destin ?'}` },
+        born != null && city && { id: 'date-lieu', tags: ['chiffre', 'mystere', 'epique', 'question'], text: `${circa ? 'Vers' : 'En'} ${year(born)}, ${un} enfant naît à ${city}. Qui aurait pu deviner ce qu'${il} allait devenir ?` },
+        death && died != null && { id: 'flashback', tags: ['flashback', 'mystere', 'epique'], text: `En ${year(died)}, tout s'arrête ${atPlace(death.nom)}. Mais pour comprendre, il faut remonter au tout début.` },
+        patron && { id: 'identification', tags: ['question', 'ludique'], text: `${cap(patron)} ${/^les /i.test(patron) ? 'ont' : 'a'} ${F.f ? 'une sainte protectrice' : 'un saint protecteur'}. ${F.f ? 'La' : 'Le'} connaissez-vous ?` },
+        F.feastSoon && feast && { id: 'fete', tags: ['question', 'emotion'], text: `Le ${feast}, l'Église fête ${name}. Mais connaissez-vous vraiment son histoire ?` },
+        story && { id: 'anecdote', tags: ['mystere', 'emotion'], story: tale.nom, text: `Voici ce qui s'est passé ${atPlace(tale.nom)}. ${story} C'est l'histoire ${deName(name)}.` },
+        role && { id: 'question-role', tags: ['question'], text: `Comment ${un} ${role} devient-${il} saint${e} ? Voici l'histoire ${deName(name)}.` },
+        lieux >= 2 && lieux <= 6 && { id: 'nombre', tags: ['chiffre', 'question'], text: `${cap(NUM[lieux])} lieux racontent la vie de ${name}. Restez jusqu'au dernier.` },
+      ].filter((x) => x && words(x.text) <= max + ((sc.target || 45) <= 25 ? 2 : 6));
+      // L'idée générale choisit d'abord le type d'accroche (le guide : une seule idée, alignée du début à la fin).
+      const PREF = { jeunesse: ['age', 'date-lieu', 'il-y-a'], courage: ['anecdote', 'flashback', 'contradiction'], mort: ['flashback', 'age', 'anecdote'],
+        miracle: ['anecdote', 'curiosite'], voyage: ['nombre', 'date-lieu'], charite: ['anecdote', 'curiosite', 'contradiction'], protection: ['identification'],
+        fondation: ['question-role', 'curiosite'], foi: ['question-role', 'curiosite'] };
+      const wanted = [...(patronage && this.relevance(patronage) > 0 ? ['identification'] : []), ...(idea.angles || []).flatMap((a) => PREF[a] || [])];
+      const aligned = opts.filter((x) => wanted.includes(x.id));
+      const o = this.choose(aligned.length && !kind ? aligned : opts, kind || tone) || { text: `Connaissez-vous vraiment ${name} ? Voici son histoire.` };
       this.hookStory = o.story || null;
       return o.text;
     }
@@ -369,6 +519,91 @@ export class Narrateur {
 
   // ------------------------------------------------------------ l'histoire
 
+  hookCaption(F, wishes) {
+    const id = this.used[0];
+    if (!F) return '';
+    const NUM = ['', 'Un', 'Deux', 'Trois', 'Quatre', 'Cinq', 'Six'];
+    const patron = F.patronage ? F.patronage.split(/,\s*| et /)[0].trim() : '';
+    const lieux = this.tourIndex?.size || 0;
+    const line = {
+      'question-demande': `${F.name} : la vraie réponse`,
+      age: `${F.f ? 'Morte' : 'Mort'} à ${F.age} ans`,
+      contradiction: `Tu crois ${F.f ? 'la' : 'le'} connaître ?`,
+      curiosite: `Ce que peu de gens savent`,
+      'il-y-a': `Il y a ${F.ago} ans…`,
+      'date-lieu': `${F.city}, ${year(F.born)}`,
+      flashback: F.death ? `${F.death.nom}, ${year(F.died)}` : '',
+      identification: patron ? `${cap(F.f ? 'la sainte' : 'le saint')} ${/^les /i.test(patron) ? 'des ' + patron.slice(4) : /^la |^le /i.test(patron) ? 'de ' + patron : 'de ' + patron}` : '',
+      fete: `Fêté${F.e} le ${F.feast}`,
+      anecdote: this.hookStory ? `Ce qui s'est passé ${atPlace(this.hookStory)}` : '',
+      'question-role': F.role ? `De ${F.role} à saint${F.e}` : '',
+      nombre: lieux ? `${NUM[lieux] || lieux} lieux, une vie` : '',
+    }[id] || '';
+    return line && line.split(/\s+/).length <= 8 ? line : '';
+  }
+
+  /** Le poids d'une phrase pour l'idée de la demande : combien de ses mots elle reprend. */
+  relevance(sentence) {
+    const t = fold(sentence);
+    return (this.topicWords || []).reduce((a, w) => a + (w.length > 3 && t.includes(w) ? 1 : 0), 0);
+  }
+
+  /** La phrase des données (fiche, anecdotes) qui répond le mieux à l'idée, pas encore dite. */
+  bestSentence(F, said = '') {
+    // Une anecdote dite loin de son lieu dit d'abord où l'on est (« il y partage… »).
+    const story = (a) => placed(a.nom, fit(a.text, 34));
+    const pool = [...F.anecdotes.map(story), ...F.bio, F.patronage ? `Aujourd'hui encore, ${F.il} veille sur ${F.patronage}.` : '', F.desc ? `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '']
+      .filter((x) => x && words(x) <= 40 && !said.includes(x.slice(-40)));
+    // À égalité, une anecdote (une scène racontée) révèle mieux qu'une phrase de fiche.
+    const stories = new Set(F.anecdotes.map(story));
+    const ranked = pool.map((x) => ({ x, r: this.relevance(x), s: stories.has(x) ? 0.5 : 0 })).sort((a, b) => (b.r - a.r) || (b.s - a.s));
+    // Rien ne répond vraiment : le portrait de la fiche plutôt qu'une phrase au hasard.
+    if (!ranked[0]?.r && F.desc) return `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.`;
+    return ranked[0]?.x || '';
+  }
+
+  /** Ce que raconte un lieu de sa vie : son anecdote si le site en a une, sinon ce qui s'y est passé. */
+  lieuLine(shot, F, max) {
+    const p = shot.params || {}, b = shot.beat || {};
+    // L'anecdote déjà racontée en accroche ne revient pas.
+    const story = F.anecdotes.find((a) => fold(a.nom) === fold(b.nom || p.near || '') && a.nom !== this.hookStory && !this.told?.has(a.nom));
+    // L'accroche partait de la mort : revenir là, c'est boucler, sans redire la date.
+    if (this.used[0] === 'flashback' && b.quoi === 'mort' && !story) return `Nous revoilà ${atPlace(b.nom)}, là où tout s'arrête.`;
+    const told = story && fit(story.text, max + 2);
+    // L'anecdote gardée pour la révélation de la fin n'est pas dite ici.
+    const r = this.reserved || '';
+    if (told && r && (r.includes(told.slice(0, 40)) || told.includes(r.slice(-40)))) return this.short(shot, F);
+    if (told) {
+      if (this.rand() < 0.5 && words(told) + 6 <= max + 2) return `Savez-vous ce qui s'est passé ${atPlace(b.nom)} ? ${told}`;
+      // « Il y meurt… » : pour qui écoute sans regarder, on dit d'abord où l'on est.
+      return placed(b.nom, told);
+    }
+    const a = atPlace(b.nom), Nom = cap(withArticle(b.nom));
+    const died = F.died != null ? `, en ${year(F.died)}` : '';
+    const lines = {
+      naissance: [`Tout commence ici, ${a}.`],
+      enfance: [`C'est ${a} qu'${F.il} passe son enfance.`],
+      formation: [`C'est ${a} qu'${F.il} se forme.`],
+      fondation: [`C'est ${a} qu'${F.il} laisse l'une de ses fondations.`, `Savez-vous ce qu'${F.il} a fondé ${a} ? ${Nom} porte encore sa marque.`],
+      oeuvre: [`C'est ${a} qu'${F.il} accomplit son œuvre.`],
+      residence: [`C'est ${a} qu'${F.il} a vécu.`],
+      predilection: [`${Nom} était l'un de ses lieux préférés.`],
+      miracle: [`C'est ${a} qu'on parle encore d'un miracle.`],
+      mort: [`Et c'est ${a} que tout s'achève${died}.`, `Savez-vous où ${F.il} meurt ? C'est ${a}${died}.`],
+      sepulture: [`Et savez-vous où ${F.il} repose aujourd'hui ? C'est ${a}.`, `Aujourd'hui, ${F.il} repose ${a}.`],
+    };
+    return this.pick(lines[b.quoi] || [`Nous voici maintenant ${a}.`]);
+  }
+
+  /** « Première étape : … », « Et dernière étape : … » quand le parcours est numéroté. */
+  step(i, n, text) {
+    if (!text) return text;
+    const ORD = ['Première', 'Deuxième', 'Troisième', 'Quatrième', 'Cinquième', 'Sixième'];
+    const head = i === n - 1 ? 'Et dernière étape' : `${ORD[i] || 'Puis'} étape`.replace('Puis étape', 'Étape suivante');
+    const lowered = /^(C'est|Et|Aujourd'hui|Tout|Il|Elle|Nous|Mais|Savez-vous|Le|La|Les|Un|Une|Voici)\b/.test(text) ? low(text.replace(/^Et /, '')) : text;
+    return `${head} : ${lowered}`;
+  }
+
   /** Une phrase courte (mais une vraie phrase), quand rien de plus riche ne tient dans la scène. */
   short(shot, F, limit = 14) {
     const p = shot.params || {}, b = shot.beat || {};
@@ -389,7 +624,10 @@ export class Narrateur {
     if (['open_saint', 'show_profile'].includes(shot.action) && F) {
       // La plus courte phrase de la fiche qui n'a pas encore été dite.
       const said = this.saidText || '';
-      const bio = F.bio.filter((x) => words(x) <= limit && !said.includes(x.slice(0, 30))).sort((x, y) => words(x) - words(y))[0];
+      // La phrase qui sert le mieux l'idée de la demande, puis la plus courte.
+      const stories = F.anecdotes.filter((a) => a.nom !== this.hookStory && this.relevance(a.text) > 0).map((a) => fit(a.text, limit)).filter(Boolean);
+      const bio = [...F.bio, ...stories].filter((x) => words(x) <= limit && !said.includes(x.slice(0, 30)))
+        .sort((x, y) => this.relevance(y) - this.relevance(x) || words(x) - words(y))[0];
       if (bio) return bio;
       if (['enigme'].includes(this.used[0]) || !F.desc) return '';
       return `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, '').split(/,\s+/)[0])}.`;
@@ -412,7 +650,7 @@ export class Narrateur {
       case 'zoom_to_place': case 'pan_to_place': {
         if (F && b.kind === 'birth') {
           // L'accroche a déjà dit la naissance : on se demande plutôt ce qu'il va devenir.
-          if (['date-lieu', 'il-y-a'].includes(this.used[0])) return this.pick([`Mais que va-t-${F.il} faire de sa vie ?`, `Qui pouvait imaginer, à ${b.place}, le destin de cet${F.f ? 'te' : ''} enfant ?`]);
+          if (['date-lieu', 'il-y-a'].includes(this.used[0])) return '';
           return this.pick([
             `Savez-vous où ${F.il} est né${F.e} ? C'est à ${b.place}${when ? ', ' + when : ''}.`,
             `C'est à ${b.place} qu'${F.il} voit le jour${when ? ', ' + when : ''}.`,
@@ -424,25 +662,7 @@ export class Narrateur {
       }
       case 'frame_view': {
         if (!F) return p.near ? `Nous voici maintenant ${atPlace(p.near)}.` : '';
-        // L'anecdote déjà racontée en accroche ne revient pas.
-        const story = F.anecdotes.find((a) => fold(a.nom) === fold(b.nom || p.near || '') && a.nom !== this.hookStory);
-        const told = story && fit(story.text, max + 2);
-        if (told) return this.rand() < 0.5 && words(told) + 6 <= max + 2 ? `Savez-vous ce qui s'est passé ${atPlace(b.nom)} ? ${told}` : told;
-        const a = atPlace(b.nom), Nom = cap(withArticle(b.nom));
-        const died = F.died != null ? `, en ${year(F.died)}` : '';
-        const lines = {
-          naissance: [`Tout commence ici, ${a}.`],
-          enfance: [`C'est ${a} qu'${F.il} passe son enfance.`],
-          formation: [`C'est ${a} qu'${F.il} se forme.`],
-          fondation: [`C'est ${a} qu'${F.il} laisse l'une de ses fondations.`, `Savez-vous ce qu'${F.il} a fondé ${a} ? ${Nom} porte encore sa marque.`],
-          oeuvre: [`C'est ${a} qu'${F.il} accomplit son œuvre.`],
-          residence: [`C'est ${a} qu'${F.il} a vécu.`],
-          predilection: [`${Nom} était l'un de ses lieux préférés.`],
-          miracle: [`C'est ${a} qu'on parle encore d'un miracle.`],
-          mort: [`Et c'est ${a} que tout s'achève${died}.`, `Savez-vous où ${F.il} meurt ? C'est ${a}${died}.`],
-          sepulture: [`Et savez-vous où ${F.il} repose aujourd'hui ? C'est ${a}.`, `Aujourd'hui, ${F.il} repose ${a}.`],
-        };
-        return this.pick(lines[b.quoi] || [`Nous voici maintenant ${a}.`]);
+        return this.lieuLine(shot, F, max);
       }
       case 'show_lieux': return F ? this.pick([`Voulez-vous voir les lieux qui ont marqué sa vie ? Les voici.`, `Et si nous suivions ses pas, lieu après lieu ?`]) : '';
       case 'show_croises': return F ? this.pick([`Mais ${F.il} n'était pas seul${F.e} : savez-vous qui ${F.il} a pu croiser ?`, `Sur sa route, d'autres saints l'ont peut-être croisé${F.e}.`]) : '';
@@ -457,20 +677,28 @@ export class Narrateur {
         const used = sc.shots.map((s) => s.narration || '').join(' ');
         // Les phrases qui racontent (il part, fonde, affirme, partage…) passent avant l'état civil.
         const ACT = /\b(affirme|fonde|fonda|part|partit|quitte|devient|devint|entre|entra|rencontre|partage|partagea|reçoit|re[çc]ut|délivre|délivra|convertit|prêche|soigne|meurt|mourut|construit|bâtit|écrit|écrivit|refuse|décide|consacre|régna|règne)\b/i;
-        const pool = F.bio.filter((x) => !used.includes(x.slice(0, 30)) && words(x) <= max)
-          .map((x, i) => ({ x, score: (ACT.test(x) ? 2 : 0) + (i > 0 ? 1 : 0) - (words(x) > 30 ? 1 : 0) + this.rand() * 1.5 }))
+        // Une anecdote qui sert l'idée de la demande (« sa jeunesse » → « entrée au carmel à quinze ans ») passe dans la fiche.
+        const fitting = F.anecdotes.filter((a) => this.relevance(a.text) > 0 && a.nom !== this.hookStory)
+          .map((a) => placed(a.nom, fit(a.text, max))).filter(Boolean);
+        const reserved = this.reserved || '';
+        const pool = [...F.bio, ...fitting].filter((x) => !used.includes(x.slice(-40)) && words(x) <= max && !(reserved && reserved.includes(x.slice(-40))))
+          .map((x, i) => ({ x, score: (ACT.test(x) ? 2 : 0) + (i > 0 ? 1 : 0) - (words(x) > 30 ? 1 : 0) + this.rand() * 1.5 + 3 * this.relevance(x) + (fitting.includes(x) && this.relevance(x) ? 2 : 0) }))
           .sort((a, b) => b.score - a.score);
         let text = pool[0]?.x || '';
+        // Une anecdote racontée ici ne sera pas redite à son lieu.
+        for (const a of F.anecdotes) if (text.includes(fit(a.text, max).slice(0, 40))) (this.told ||= new Set()).add(a.nom);
         if (pool[1] && words(text) + words(pool[1].x) <= max) text += ' ' + pool[1].x;
         // Une fois sur trois, ou faute de phrase qui tienne : son portrait, en une phrase.
         const portrait = F.desc ? `${F.Il} est resté${F.e} dans l'histoire comme ${F.un} ${low(F.desc.replace(/\.$/, ''))}.` : '';
         const descSaid = this.used[0] === 'enigme';
-        if ((!text || this.rand() < 0.35) && !descSaid && portrait && words(portrait) <= max + 2) text = portrait;
+        if ((!text || this.rand() < 0.35) && !descSaid && portrait && portrait !== this.reserved && words(portrait) <= max + 2) text = portrait;
         // Une question pour relancer l'attention avant la fiche.
         const ask = this.pick([`Mais qui était-${F.il} vraiment ?`, `Que sait-on de sa vie ?`, `Pourquoi se souvient-on encore ${F.f ? "d'elle" : 'de lui'} ?`]);
-        if (text && words(ask) + words(text) <= max + 2 && this.rand() < 0.6) text = `${ask} ${text}`;
+        if (text && !this.idea?.question && words(ask) + words(text) <= max + 2 && this.rand() < 0.6) text = `${ask} ${text}`;
         const veille = `${text ? 'Et a' : 'A'}ujourd'hui encore, ${F.il} veille sur ${F.patronage}.`;
-        if (F.patronage && words(text) + words(veille) <= max + 2 && this.rand() < 0.6) text = `${text} ${veille}`.trim();
+        // Ce qu'il protège répond à la demande (« il aimait les animaux ») : c'est dit en premier.
+        if (F.patronage && this.relevance(F.patronage) > this.relevance(text) && !(this.reserved || '').includes(F.patronage)) text = fit(`Aujourd'hui encore, ${F.il} veille sur ${F.patronage}. ${text}`, max + 2);
+        else if (F.patronage && words(text) + words(veille) <= max + 2 && this.rand() < 0.6) text = `${text} ${veille}`.trim();
         return text;
       }
       case 'century_filter': return `Voici les saints du ${p.century}e siècle, tous réunis sur la carte.`;
@@ -489,6 +717,11 @@ export class Narrateur {
     if (forced) return forced;
     const many = this.saintsCount ? `plus de ${this.saintsCount.toLocaleString('fr-FR')}` : 'des milliers de';
     const who = F?.name;
+    // La boucle : une accroche qui partait de la fin se referme sur le début.
+    if (F && this.used[0] === 'flashback' && F.city) {
+      this.used.push('f-boucle');
+      return `Et dire que tout avait commencé à ${F.city}. Retrouvez toute son histoire sur SanctiMaps.`;
+    }
     const opts = [
       who && { id: 'f-histoire', tags: ['emotion', 'mystere', 'question'], text: `Voulez-vous connaître toute l'histoire ${deName(who)} ? Elle vous attend sur SanctiMaps.` },
       { id: 'f-nombre', tags: ['epique', 'question'], text: `Et ce n'est qu'un début : ${many} saints vous attendent sur SanctiMaps. Lequel découvrirez-vous en premier ?` },

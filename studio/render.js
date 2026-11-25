@@ -416,6 +416,7 @@ export class FrameRenderer {
       if (this.goodOverlay) this.ctx.drawImage(this.goodOverlay, 0, 0, this.width, this.height);
     }
     this.drawCaption();
+    this.drawSubtitle();
     this.drawCursor();
   }
 
@@ -487,7 +488,8 @@ export class FrameRenderer {
   drawCaption() {
     const c = this.cap; if (!c) return;
     const fade = Math.round(this.fps * 0.4);
-    const a = Math.min(1, (this.frames - c.from + 1) / fade, (c.to - this.frames) / fade);
+    // Le texte d'accroche est là dès la première image (pas de fondu d'entrée).
+    const a = Math.min(1, c.instant ? 1 : (this.frames - c.from + 1) / fade, (c.to - this.frames) / fade);
     if (a <= 0) return;
     const ctx = this.ctx, W = this.width, H = this.height, u = Math.min(W, H) / 1080, wide = W > H;
     const pad = 26 * u, maxW = W * (wide ? 0.5 : 0.84);
@@ -519,6 +521,48 @@ export class FrameRenderer {
     ctx.font = tFont; title.forEach((l, i) => ctx.fillText(l, x + pad + 10 * u, y + pad + i * tH));
     ctx.font = sFont; ctx.fillStyle = 'rgba(255, 246, 232, 0.9)';
     sub.forEach((l, i) => ctx.fillText(l, x + pad + 10 * u, y + pad + title.length * tH + 8 * u + i * sH));
+    ctx.restore();
+  }
+
+  /**
+   * Sous-titres de la voix off, pour ceux qui regardent sans le son : la phrase
+   * de la scène, découpée en morceaux de quelques mots, chacun affiché le temps
+   * qu'il est dit (au prorata de ses mots sur la durée de la phrase lue).
+   */
+  setSubtitle(text, seconds) {
+    const w = String(text || '').trim().split(/\s+/).filter(Boolean);
+    if (!w.length || !seconds) { this.sub = null; return; }
+    const chunks = []; let cur = [];
+    for (const word of w) {
+      cur.push(word);
+      // Un morceau s'arrête à la ponctuation forte, ou vers 6 mots — jamais sur un petit mot
+      // (« son », « le », « de »…) qui annonce la suite.
+      const small = /^(le|la|les|l'|un|une|des|du|de|d'|son|sa|ses|ce|cette|à|au|aux|et|en|par|pour|qui|que|il|elle|ne|se|sur|dans)$/i.test(word);
+      if (/[.!?…:;]$/.test(word) || (cur.length >= 6 && !small) || cur.length >= 8 || (cur.length >= 4 && /,$/.test(word))) { chunks.push(cur); cur = []; }
+    }
+    if (cur.length) chunks.push(cur);
+    const per = seconds * this.fps / w.length;
+    let at = this.frames;
+    this.sub = chunks.map((c) => { const from = at; at += Math.max(1, Math.round(c.length * per)); return { text: c.join(' '), from, to: at }; });
+  }
+
+  drawSubtitle() {
+    const c = this.sub?.find((x) => this.frames >= x.from && this.frames < x.to); if (!c) return;
+    const ctx = this.ctx, W = this.width, H = this.height, u = Math.min(W, H) / 1080, wide = W > H;
+    const size = Math.round((wide ? 46 : 58) * u);
+    ctx.save();
+    ctx.font = `800 ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    // Deux lignes au plus, au centre (hors des bords où l'application place ses boutons).
+    const maxW = W * (wide ? 0.7 : 0.82), lines = []; let line = '';
+    for (const word of c.text.split(' ')) { const next = line ? `${line} ${word}` : word; if (ctx.measureText(next).width > maxW && line) { lines.push(line); line = word; } else line = next; }
+    if (line) lines.push(line);
+    const lh = size * 1.22, y0 = H * (wide ? 0.84 : 0.7) - ((lines.length - 1) * lh) / 2;
+    const bw = Math.min(W * 0.92, Math.max(...lines.map((l) => ctx.measureText(l).width)) + size * 1.1), bh = lines.length * lh + size * 0.5;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(W / 2 - bw / 2, y0 - lh / 2 - size * 0.25, bw, bh, 14 * u) : ctx.rect(W / 2 - bw / 2, y0 - lh / 2 - size * 0.25, bw, bh); ctx.fill();
+    ctx.lineJoin = 'round'; ctx.lineWidth = size * 0.14; ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)'; ctx.fillStyle = '#fff';
+    lines.forEach((l, i) => { ctx.strokeText(l, W / 2, y0 + i * lh); ctx.fillText(l, W / 2, y0 + i * lh); });
     ctx.restore();
   }
 

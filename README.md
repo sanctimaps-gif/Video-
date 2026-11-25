@@ -54,6 +54,20 @@ elle est posée dans le MP4 à l'instant exact où sa scène commence, la musiqu
 Sans réglage ou en cas d'erreur (clé refusée, crédits épuisés), la vidéo se fait sans voix off et le
 journal dit pourquoi. Les vidéos sont **dynamiques par défaut** (le but : donner envie d'aller sur le site).
 
+**Comprendre l'idée, capter en 3 secondes** (d'après le guide « Les 3 premières secondes »). Le réalisateur
+dégage d'abord l'**idée générale** de la demande, au-delà des mots-clés : l'angle (courage, jeunesse, mort,
+miracle, parcours, charité, protection, fondation, foi), le public, et la **question** posée (« Pourquoi saint
+Martin a-t-il partagé son manteau ? », « une vidéo qui montre que… »). Il la montre dans « Réflexion du
+réalisateur ». Tout le script s'aligne sur cette seule idée : l'accroche l'annonce, les phrases de la fiche et
+les anecdotes sont choisies parce qu'elles y répondent, et la **réponse est gardée pour la fin** (« Et voici la
+réponse… »). Un saint est reconnu où qu'il soit nommé dans la phrase. Règles du guide appliquées : première
+phrase de moins de 10 mots qui ouvre une boucle, leviers variés (curiosité, contradiction, identification par
+le patronage, histoire, chiffre, « reste jusqu'au dernier »), on **tutoie** (sauf « vouvoie »), parcours numéroté
+quand c'est le sujet, fin qui relance ou boucle sur le début. À l'image : un **texte d'accroche de 3 à 8 mots**,
+complémentaire de la voix, dès la première image en haut ; l'image bouge dans les 2 premières secondes ;
+**sous-titres** de la voix off incrustés (case cochée par défaut) pour ceux qui regardent sans le son ; la
+musique démarre tout de suite et passe sous la voix.
+
 **Le son.** La case **Musique d'ambiance** ajoute au MP4 une musique douce composée sur l'appareil
 (accords tenus, notes de cloche, écho ; `studio/son.js`), à la durée exacte de la vidéo, avec entrée et
 sortie en fondu : rien n'est téléchargé, aucun droit d'auteur. **🎙️ Enregistrer la voix off** ouvre un
