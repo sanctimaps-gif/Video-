@@ -92,7 +92,9 @@ viennent après son histoire. Sans durée demandée, la vidéo dure environ 12 s
 sources validées : **Wikipédia en français** pour le texte (seules les phrases appuyées sur une référence,
 dont le saint est le sujet, tirées des parties qui racontent sa vie, sa légende ou son culte ; lien permanent
 vers la version lue, licence CC BY-SA) et **Nominis** (Église de France) pour la confirmation (son texte n'est
-pas recopié : une anecdote que sa notice corrobore est marquée « confirmée par Nominis »). Les légendes sont
+pas recopié : une anecdote que sa notice corrobore est marquée « confirmée par Nominis ») et le **Vatican**
+(biographies officielles en français des saints canonisés, `--vatican` : quelques phrases courtes citées avec
+leur lien, et la confirmation des anecdotes de Wikipédia qu'elles corroborent). Les légendes sont
 gardées mais toujours dites comme telles (« Selon la tradition… »). Le résultat (`studio/data/anecdotes/`, un
 fichier par lettre) est chargé à la demande par le narrateur : l'anecdote passe dans la fiche ou l'accroche,
 et sa source est citée sous le storyboard. Lecture lente et identifiée ; reprise automatique après coupure :

@@ -6,6 +6,9 @@ Sources (choisies et validées par le propriétaire du projet) :
     référence, tirées des parties qui racontent la vie, la légende ou le culte
     du saint, sont gardées ; chaque anecdote garde le lien permanent de la
     version lue (licence CC BY-SA : la source est toujours citée) ;
+  * le Vatican (vatican.va) — biographies officielles en français des saints
+    canonisés (``--vatican``) : quelques phrases courtes citées avec leur lien,
+    et la confirmation des anecdotes de Wikipédia qu'elles corroborent ;
   * Nominis (Conférence des évêques de France) — la confirmation : le texte de
     Nominis n'est pas recopié (droit d'auteur) ; quand sa notice reprend les
     éléments d'une anecdote, celle-ci est marquée « confirmée par Nominis »,
@@ -76,7 +79,24 @@ def get(url: str, *, attempts: int = 5) -> str:
             req = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept-Language': 'fr'})
             with urllib.request.urlopen(req, timeout=30) as r:
                 _last[host] = time.time()
-                return r.read().decode('utf-8', 'replace')
+                raw = r.read()
+                # L'encodage déclaré (les pages anciennes du Vatican sont en Latin-1).
+                charset = r.headers.get_content_charset()
+                if not charset:
+                    m = re.search(rb'charset=["\']?([\w-]+)', raw[:2000])
+                    charset = m.group(1).decode() if m else 'utf-8'
+                # Les vieilles pages déclarent parfois un encodage qui n'est pas le leur : UTF-8 d'abord
+                # s'il convient, puis l'encodage déclaré (Latin-1 lu comme Windows-1252).
+                try:
+                    text = raw.decode('utf-8')
+                except UnicodeDecodeError:
+                    cs = 'cp1252' if charset.lower() in ('iso-8859-1', 'latin-1', 'latin1', 'iso8859-1') else charset
+                    try:
+                        text = raw.decode(cs)
+                    except (LookupError, UnicodeDecodeError):
+                        text = raw.decode('utf-8', 'replace')
+                # Caractères de contrôle à la place des apostrophes typographiques (U+0092 → ’).
+                return re.sub('[\u0080-\u009f]', lambda m: bytes([ord(m.group())]).decode('cp1252', 'ignore'), text)
         except urllib.error.HTTPError as e:
             _last[host] = time.time()
             if e.code == 404:
@@ -210,7 +230,9 @@ def is_subject(s: str, first: str) -> bool:
     return first in head or ('saint' in head[:2] and first in fold(rest).split()[:5])
 
 
-def candidates(article, name: str, known: str, sex: str = 'm', died: int | None = None):
+def candidates(article, name: str, known: str, sex: str = 'm', died: int | None = None, official: bool = False):
+    """``official`` : une biographie entière consacrée au saint (Vatican) — pas besoin de
+    référence, et « il / elle » en tête de phrase désigne forcément le saint."""
     """Les phrases qui font une bonne anecdote, avec un score."""
     out = []
     first = fold(name).split(' ')[0]
@@ -224,7 +246,7 @@ def candidates(article, name: str, known: str, sex: str = 'm', died: int | None 
         for s, sourced in sentences(para):
             prev, before = before, s
             words = s.split()
-            if not (12 <= len(words) <= 42) or not sourced:
+            if not (12 <= len(words) <= 42) or not (sourced or official):
                 continue
             if VAGUE_START.search(s) or MODERN.search(s) or not ACTION.search(s):
                 continue
@@ -232,7 +254,7 @@ def candidates(article, name: str, known: str, sex: str = 'm', died: int | None 
             if not re.match(r'^[A-ZÉÈÀÂÎÔÛ«]', s) or s.count('(') != s.count(')') or not re.search(r'[.!?»]$', s):
                 continue
             # Le saint est le sujet : nommé en tête, ou « il / elle » juste après avoir été nommé.
-            if not (is_subject(s, first) or (pronoun.search(LEAD.sub('', s)) and prev and is_subject(prev, first))):
+            if not (is_subject(s, first) or (pronoun.search(LEAD.sub('', s)) and (official or (prev and is_subject(prev, first))))):
                 continue
             # « ce dernier », « celui-ci » : incompréhensible une fois la phrase isolée.
             if re.search(r"\b(ce dernier|cette dernière|ces derniers|celui-ci|celle-ci|ceux-ci|lequel|laquelle|ce même|cette même)\b", s, re.I):
@@ -308,6 +330,55 @@ def confirms(anecdote: str, notice: str) -> bool:
 
 # ------------------------------------------------------------------ tout ensemble
 
+# ------------------------------------------------------------------ Vatican
+
+VATICAN_INDEX = 'https://www.vatican.va/news_services/liturgy/saints/index_saints_fr.html'
+
+
+def vatican_pages():
+    """Les biographies officielles en français des saints canonisés (sommaire du Vatican)."""
+    page = get(VATICAN_INDEX)
+    links = sorted(set(re.findall(r'href="([^"]*ns_lit_doc[^"]*_fr\.html)"', page)))
+    out = []
+    for href in links:
+        url = urllib.parse.urljoin(VATICAN_INDEX, href)
+        try:
+            body = get(url)
+        except Exception:  # noqa: BLE001
+            continue
+        title = re.search(r'<title>(.*?)</title>', body, re.S)
+        title = ' '.join(html.unescape(title.group(1)).split()) if title else ''
+        years = [int(y) for y in re.findall(r'\((\d{4})\s*-\s*(\d{4})\)', title)[0]] if re.search(r'\(\d{4}\s*-\s*\d{4}\)', title) else []
+        paras = [' '.join(html.unescape(re.sub(r'<[^>]+>', '', p)).split()) for p in re.findall(r'(?is)<p[^>]*>(.*?)</p>', body)]
+        # Les noms en capitales (« JEAN-GABRIEL PERBOYRE naquit… ») redeviennent des noms.
+        paras = [re.sub(r"\b([A-ZÉÈÀÂÎÔÛÇ][A-ZÉÈÀÂÎÔÛÇ'-]{2,}(?:\s+[A-ZÉÈÀÂÎÔÛÇ][A-ZÉÈÀÂÎÔÛÇ'-]{2,})*)\b",
+                        lambda m: m.group(1).title(), p) for p in paras if len(p) > 40]
+        if paras:
+            out.append({'url': url, 'title': title, 'years': years, 'paras': [('Vie', p) for p in paras], 'text': ' '.join(paras)})
+    return out
+
+
+def match_vatican(page, saints, texts):
+    """Le saint du site que la biographie raconte : même nom (au moins un mot rare), mêmes dates."""
+    name = fold(re.split(r'\(|,', page['title'])[0])
+    words = {w for w in name.split() if len(w) >= 4 and w not in ('saint', 'sainte', 'bienheureux', 'bienheureuse', 'mere', 'pere', 'marie', 'biographie')}
+    best, score_best = None, 0
+    for s in saints:
+        n = s['name']['fr'] if isinstance(s['name'], dict) else s['name']
+        common = words & set(fold(n).split())
+        if not common:
+            continue
+        score = 3 * len(common)
+        if page['years']:
+            b, d = page['years']
+            score += 4 if s.get('died') and abs(s['died'] - d) <= 1 else -6 if s.get('died') else 0
+            score += 2 if s.get('born') and abs(s['born'] - b) <= 1 else 0
+        if score > score_best:
+            best, score_best = s, score
+    # Deux mots rares du nom en commun suffisent quand la page ne donne pas de dates (« S. Thérèse de Lisieux »).
+    return best if score_best >= 6 else None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--site', required=True, help='dossier du dépôt SanctiMaps (données)')
@@ -316,6 +387,7 @@ def main():
     ap.add_argument('--limit', type=int, default=0, help='nombre de saints (0 : tous)')
     ap.add_argument('--only', default='', help='identifiants de saints, séparés par des virgules')
     ap.add_argument('--no-nominis', action='store_true')
+    ap.add_argument('--vatican', action='store_true', help='ajouter les biographies officielles du Vatican (et rien d\'autre)')
     args = ap.parse_args()
 
     gen = Path(args.site) / 'data' / 'generated'
@@ -336,7 +408,24 @@ def main():
     if args.limit:
         todo = todo[:args.limit]
 
-    index = None if args.no_nominis else nominis_index(cache)
+    if args.vatican:
+        todo = []
+        vat = cache.setdefault('vatican', {})
+        for page in vatican_pages():
+            s = match_vatican(page, saints, texts)
+            if not s:
+                print(f'  ? sans correspondance : {page["title"]}', file=sys.stderr)
+                continue
+            name = s['name']['fr'] if isinstance(s['name'], dict) else s['name']
+            t = texts.get(s['id'], {})
+            known = (t.get('bio', {}).get('fr', '') + ' ' + t.get('desc', {}).get('fr', ''))
+            found = candidates({'url': page['url'], 'paras': page['paras']}, name, known, s.get('sex', 'm'), s.get('died'), official=True)
+            vat[s['id']] = {'url': page['url'], 'text': page['text'],
+                            'items': [{'text': c['text'], 'legend': c['legend'], 'source': 'Vatican', 'url': page['url']} for c in found[:3]]}
+            print(f'  {name} ← {page["title"][:60]} : {len(found[:3])} anecdote(s)')
+        Path(args.cache).write_text(json.dumps(cache, ensure_ascii=False))
+
+    index = None if (args.no_nominis or args.vatican) else nominis_index(cache)
     started = time.time()
     for n, s in enumerate(todo, 1):
         if s['id'] in done:
@@ -381,13 +470,23 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     shards: dict[str, dict] = {}
-    for sid, items in done.items():
+    merged = {sid: list(items) for sid, items in done.items() if items}
+    # Le Vatican : ses anecdotes s'ajoutent, et il confirme celles de Wikipédia qu'il corrobore.
+    for sid, v in cache.get('vatican', {}).items():
+        lst = merged.setdefault(sid, [])
+        for a in lst:
+            if not a.get('confirmed') and confirms(a['text'], v['text']):
+                a['confirmed'] = {'source': 'Vatican', 'url': v['url']}
+        for a in v['items']:
+            if all(fold(a['text'])[:60] != fold(b['text'])[:60] for b in lst):
+                lst.append(a)
+    for sid, items in merged.items():
         if items:
             shards.setdefault(shard_of(sid), {})[sid] = items
     for key, data in shards.items():
         (out / f'{key}.json').write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')))
-    total = sum(len(v) for v in done.values())
-    print(f'{total} anecdotes pour {sum(1 for v in done.values() if v)} saints → {out}')
+    total = sum(len(v) for v in merged.values())
+    print(f'{total} anecdotes pour {sum(1 for v in merged.values() if v)} saints → {out}')
 
 
 def shard_of(saint_id: str) -> str:
