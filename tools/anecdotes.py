@@ -553,7 +553,8 @@ def main():
             rate = (time.time() - started) / max(1, n)
             print(f'{n}/{len(todo)} saints lus — {sum(1 for v in done.values() if v)} avec anecdotes '
                   f'(reste ≈ {int(rate * (len(todo) - n) / 60)} min)', flush=True)
-    Path(args.cache).write_text(json.dumps(cache, ensure_ascii=False))
+    if not args.write_only:  # (une collecte peut tourner en même temps : on ne touche pas à son cache)
+        Path(args.cache).write_text(json.dumps(cache, ensure_ascii=False))
 
     # Sortie : un fichier par première lettre de l'identifiant (le studio n'en charge qu'un à la fois).
     out = Path(args.out)
