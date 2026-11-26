@@ -230,7 +230,7 @@ def is_subject(s: str, first: str) -> bool:
     return first in head or ('saint' in head[:2] and first in fold(rest).split()[:5])
 
 
-def candidates(article, name: str, known: str, sex: str = 'm', died: int | None = None, official: bool = False):
+def candidates(article, name: str, known: str, sex: str = 'm', died: int | None = None, official: bool = False, no_ref: bool = False):
     """``official`` : une biographie entière consacrée au saint (Vatican) — pas besoin de
     référence, et « il / elle » en tête de phrase désigne forcément le saint."""
     """Les phrases qui font une bonne anecdote, avec un score."""
@@ -246,7 +246,7 @@ def candidates(article, name: str, known: str, sex: str = 'm', died: int | None 
         for s, sourced in sentences(para):
             prev, before = before, s
             words = s.split()
-            if not (12 <= len(words) <= 42) or not (sourced or official):
+            if not (12 <= len(words) <= 42) or not (sourced or official or no_ref):
                 continue
             if VAGUE_START.search(s) or MODERN.search(s) or not ACTION.search(s):
                 continue
@@ -358,6 +358,53 @@ def vatican_pages():
     return out
 
 
+# ------------------------------------------------------------------ sanctuaires
+
+# Sites officiels de sanctuaires catholiques (autorisés par le propriétaire du projet), version
+# française : chacun est consacré à un saint de la carte.
+SANCTUAIRES = [
+    {'saints': ['therese-lisieux'], 'start': 'https://www.therese-de-lisieux.catholique.fr/', 'name': 'Sanctuaire de Lisieux', 'keys': ['therese', 'vie', 'histoire', 'carmel', 'famille', 'martin']},
+    {'saints': ['bernadette-soubirous'], 'start': 'https://www.lourdes-france.org/', 'name': 'Sanctuaire de Lourdes', 'keys': ['bernadette', 'apparition', 'histoire', 'grotte']},
+    {'saints': ['bernadette-soubirous'], 'start': 'https://sainte-bernadette-nevers.com/fr/', 'name': 'Espace Bernadette, Nevers', 'keys': ['bernadette', 'vie', 'histoire', 'nevers']},
+    {'saints': ['jean-marie-vianney'], 'start': 'https://www.arsnet.org/', 'name': 'Sanctuaire d\'Ars', 'keys': ['vianney', 'cure', 'vie', 'histoire', 'saint']},
+    {'saints': ['catherine-laboure'], 'start': 'https://www.medaillemiraculeuse.org/fr/', 'name': 'Chapelle de la Médaille miraculeuse', 'keys': ['catherine', 'laboure', 'apparition', 'histoire', 'medaille']},
+    {'saints': ['antoine-padoue'], 'start': 'https://www.santantonio.org/fr', 'name': 'Basilique Saint-Antoine de Padoue', 'keys': ['antoine', 'vie', 'saint', 'histoire', 'miracle']},
+    {'saints': ['andre-bessette'], 'start': 'https://saint-joseph.org/fr/', 'name': 'Oratoire Saint-Joseph du Mont-Royal', 'keys': ['andre', 'frere', 'histoire', 'bessette']},
+    {'saints': ['francisco-marto', 'jacinta-marto'], 'start': 'https://www.fatima.pt/fr/', 'name': 'Sanctuaire de Fatima', 'keys': ['francisco', 'jacinta', 'pastoureaux', 'apparition', 'histoire', 'voyants']},
+    {'saints': ['martin-tours'], 'start': 'https://www.basiliquesaintmartin.fr/', 'name': 'Basilique Saint-Martin de Tours', 'keys': ['martin', 'vie', 'histoire', 'saint']},
+]
+
+
+def sanctuary_pages(site, limit=30):
+    """Les pages d'un sanctuaire qui parlent de la vie du saint (même site, mots-clés dans l'adresse)."""
+    start = site['start']
+    host = urllib.parse.urlparse(start).netloc
+    queue, seen, pages = [start], set(), []
+    while queue and len(seen) < limit:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            body = get(url)
+        except Exception:  # noqa: BLE001
+            continue
+        clean = re.sub(r'(?is)<(script|style|nav|header|footer|form)[^>]*>.*?</\1>', ' ', body)
+        paras = [' '.join(html.unescape(re.sub(r'<[^>]+>', '', p)).split()) for p in re.findall(r'(?is)<p[^>]*>(.*?)</p>', clean)]
+        paras = [p for p in paras if len(p) > 60]
+        if paras:
+            pages.append({'url': url, 'paras': [('Vie', p) for p in paras]})
+        for href in re.findall(r'href="([^"#?]+)"', body):
+            u = urllib.parse.urljoin(url, href)
+            pu = urllib.parse.urlparse(u)
+            if pu.netloc != host or re.search(r'\.(jpg|jpeg|png|pdf|gif|svg|mp3|mp4|zip|css|js)$', pu.path, re.I):
+                continue
+            path = fold(urllib.parse.unquote(pu.path))
+            if any(k in path for k in site['keys']) and u not in seen and u not in queue:
+                queue.append(u)
+    return pages
+
+
 def match_vatican(page, saints, texts):
     """Le saint du site que la biographie raconte : même nom (au moins un mot rare), mêmes dates."""
     name = fold(re.split(r'\(|,', page['title'])[0])
@@ -388,6 +435,7 @@ def main():
     ap.add_argument('--only', default='', help='identifiants de saints, séparés par des virgules')
     ap.add_argument('--no-nominis', action='store_true')
     ap.add_argument('--vatican', action='store_true', help='ajouter les biographies officielles du Vatican (et rien d\'autre)')
+    ap.add_argument('--sanctuaires', action='store_true', help='ajouter les sites officiels de sanctuaires (et rien d\'autre)')
     args = ap.parse_args()
 
     gen = Path(args.site) / 'data' / 'generated'
@@ -425,7 +473,32 @@ def main():
             print(f'  {name} ← {page["title"][:60]} : {len(found[:3])} anecdote(s)')
         Path(args.cache).write_text(json.dumps(cache, ensure_ascii=False))
 
-    index = None if (args.no_nominis or args.vatican) else nominis_index(cache)
+    if args.sanctuaires:
+        todo = []
+        sanct = cache.setdefault('sanctuaires', {})
+        by_id = {s['id']: s for s in saints}
+        for site in SANCTUAIRES:
+            pages = sanctuary_pages(site)
+            for sid in site['saints']:
+                s = by_id.get(sid)
+                if not s:
+                    continue
+                name = s['name']['fr'] if isinstance(s['name'], dict) else s['name']
+                t = texts.get(sid, {})
+                known = (t.get('bio', {}).get('fr', '') + ' ' + t.get('desc', {}).get('fr', ''))
+                items = []
+                for page in pages:
+                    # (pas « official » : un site de sanctuaire parle aussi d'autres choses que du saint)
+                    for c in candidates(page, name, known, s.get('sex', 'm'), s.get('died'), official=False, no_ref=True):
+                        if all(fold(c['text'])[:60] != fold(i['text'])[:60] for i in items):
+                            items.append({'text': c['text'], 'legend': c['legend'], 'source': site['name'], 'url': page['url'], 'score': c['score']})
+                items.sort(key=lambda i: -i['score'])
+                sanct.setdefault(sid, [])
+                sanct[sid] = [i for i in sanct[sid] if i['source'] != site['name']] + [{k: v for k, v in i.items() if k != 'score'} for i in items[:3]]
+                print(f'  {site["name"]} → {name} : {len(pages)} page(s) lue(s), {len(items[:3])} anecdote(s)')
+        Path(args.cache).write_text(json.dumps(cache, ensure_ascii=False))
+
+    index = None if (args.no_nominis or args.vatican or args.sanctuaires) else nominis_index(cache)
     started = time.time()
     for n, s in enumerate(todo, 1):
         if s['id'] in done:
@@ -478,6 +551,11 @@ def main():
             if not a.get('confirmed') and confirms(a['text'], v['text']):
                 a['confirmed'] = {'source': 'Vatican', 'url': v['url']}
         for a in v['items']:
+            if all(fold(a['text'])[:60] != fold(b['text'])[:60] for b in lst):
+                lst.append(a)
+    for sid, items in cache.get('sanctuaires', {}).items():
+        lst = merged.setdefault(sid, [])
+        for a in items:
             if all(fold(a['text'])[:60] != fold(b['text'])[:60] for b in lst):
                 lst.append(a)
     for sid, items in merged.items():
