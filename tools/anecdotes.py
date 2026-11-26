@@ -48,7 +48,7 @@ SKIP_SECTIONS = re.compile(r'(notes?|références|bibliographie|liens externes|v
                            r'postérité|controverse|débat|réception|hommage|mémoire|commémoration|récupération|imposture|'
                            r'faux|fausses|survivance|mythe|polémique|critique|famille|ascendance|descendance|généalogie)', re.I)
 LEGEND = re.compile(r"\b(légende|légendaire|tradition|selon la tradition|on raconte|raconte-t-on|dit-on|rapporte-t-on|"
-                    r"aurait|auraient|serait|seraient|hagiograph\w*|selon (?:sa|la) vita|pieuse|attribu\w*|prodige\w*|miracul\w*)\b", re.I)
+                    r"aurait|auraient|serait|seraient|hagiograph\w*|selon (?:sa|la) vita|pieuse|attribu\w*|prodige\w*|miracul\w*|miracles?|ressuscit\w*)\b", re.I)
 LEGEND_SECTION = re.compile(r'(légende|tradition|hagiographie|miracles?)', re.I)
 # Ce qui fait une anecdote : une action concrète, un détail, un lieu, une date.
 ACTION = re.compile(r"\b(partage|partagea|refuse|refusa|fuit|s'enfuit|voit|vit|entend|entendit|guérit|guérissait|sauve|sauva|"
@@ -223,6 +223,19 @@ DOUBT = re.compile(r"(interprétation abusive|référence nécessaire|réf\. né
 LEAD = re.compile(r"^(?:(?:En|Le|La|Les|Au|Aux|À|A|Dans|Lors|Avant|Après|Pendant|Vers|Alors|Dès|Depuis|Selon|D'après|Un|Une)\b[^,;:]{0,80},\s*)+")
 
 
+# Une prière ou une invocation (« Saint Antoine, rends-nous attentifs… ») n'est pas une anecdote.
+PRAYER = re.compile(r"(^(saint|sainte|ô|o)\s[^,]{2,40},\s*(vous|tu|rends|donne|priez|prie|aide|accorde|obtiens|intercède|protège|garde|apprends|enseigne)|"
+                    r"\b(priez pour nous|prie pour nous|rends-nous|donne-nous|aide-nous|apprends-nous|accorde-nous|amen)\b)", re.I)
+FR_WORDS = set('le la les un une des de du et à au aux en dans pour par sur avec qui que il elle est était fut a ont son sa ses se ne pas plus'.split())
+
+
+def acceptable(text: str) -> bool:
+    """Une anecdote dite en français, et pas une prière."""
+    w = fold(text).split()
+    french = sum(1 for x in w if x in FR_WORDS) / max(1, len(w))
+    return french >= 0.12 and not PRAYER.search(text)
+
+
 def is_subject(s: str, first: str) -> bool:
     """Le saint est-il le sujet ? Son nom arrive dans les tout premiers mots (après une date ou un lieu)."""
     rest = LEAD.sub('', s)
@@ -259,7 +272,7 @@ def candidates(article, name: str, known: str, sex: str = 'm', died: int | None 
             # « ce dernier », « celui-ci » : incompréhensible une fois la phrase isolée.
             if re.search(r"\b(ce dernier|cette dernière|ces derniers|celui-ci|celle-ci|ceux-ci|lequel|laquelle|ce même|cette même)\b", s, re.I):
                 continue
-            if DOUBT.search(s) or s.count('«') != s.count('»') or '?' in s[:-1]:
+            if DOUBT.search(s) or s.count('«') != s.count('»') or '?' in s[:-1] or not acceptable(s):
                 continue
             # Rien de moderne : l'anecdote raconte sa vie, sa mort ou les siècles qui ont suivi de près.
             years = [int(y) for y in re.findall(r'\b(1\d{3}|[2-9]\d{2})\b', s)]
@@ -436,6 +449,7 @@ def main():
     ap.add_argument('--no-nominis', action='store_true')
     ap.add_argument('--vatican', action='store_true', help='ajouter les biographies officielles du Vatican (et rien d\'autre)')
     ap.add_argument('--sanctuaires', action='store_true', help='ajouter les sites officiels de sanctuaires (et rien d\'autre)')
+    ap.add_argument('--write-only', action='store_true', help='réécrire les fichiers à partir de ce qui est déjà collecté (rien n\'est lu en ligne)')
     args = ap.parse_args()
 
     gen = Path(args.site) / 'data' / 'generated'
@@ -498,7 +512,9 @@ def main():
                 print(f'  {site["name"]} → {name} : {len(pages)} page(s) lue(s), {len(items[:3])} anecdote(s)')
         Path(args.cache).write_text(json.dumps(cache, ensure_ascii=False))
 
-    index = None if (args.no_nominis or args.vatican or args.sanctuaires) else nominis_index(cache)
+    if args.write_only:
+        todo = []
+    index = None if (args.no_nominis or args.vatican or args.sanctuaires or args.write_only) else nominis_index(cache)
     started = time.time()
     for n, s in enumerate(todo, 1):
         if s['id'] in done:
@@ -543,7 +559,13 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     shards: dict[str, dict] = {}
-    merged = {sid: list(items) for sid, items in done.items() if items}
+    def clean(a):
+        if not acceptable(a['text']):
+            return None
+        if not a.get('legend') and LEGEND.search(a['text']):
+            a = {**a, 'legend': True}
+        return a
+    merged = {sid: [c for c in (clean(a) for a in items) if c] for sid, items in done.items() if items}
     # Le Vatican : ses anecdotes s'ajoutent, et il confirme celles de Wikipédia qu'il corrobore.
     for sid, v in cache.get('vatican', {}).items():
         lst = merged.setdefault(sid, [])
@@ -551,12 +573,14 @@ def main():
             if not a.get('confirmed') and confirms(a['text'], v['text']):
                 a['confirmed'] = {'source': 'Vatican', 'url': v['url']}
         for a in v['items']:
-            if all(fold(a['text'])[:60] != fold(b['text'])[:60] for b in lst):
+            a = clean(a)
+            if a and all(fold(a['text'])[:60] != fold(b['text'])[:60] for b in lst):
                 lst.append(a)
     for sid, items in cache.get('sanctuaires', {}).items():
         lst = merged.setdefault(sid, [])
         for a in items:
-            if all(fold(a['text'])[:60] != fold(b['text'])[:60] for b in lst):
+            a = clean(a)
+            if a and all(fold(a['text'])[:60] != fold(b['text'])[:60] for b in lst):
                 lst.append(a)
     for sid, items in merged.items():
         if items:
