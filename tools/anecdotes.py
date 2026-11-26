@@ -229,11 +229,15 @@ PRAYER = re.compile(r"(^(saint|sainte|ô|o)\s[^,]{2,40},\s*(vous|tu|rends|donne|
 FR_WORDS = set('le la les un une des de du et à au aux en dans pour par sur avec qui que il elle est était fut a ont son sa ses se ne pas plus'.split())
 
 
+EN_WORDS = set('the and of to in was were which that with his her is are seemed from this by be had not as'.split())
+
+
 def acceptable(text: str) -> bool:
-    """Une anecdote dite en français, et pas une prière."""
+    """Une anecdote en français (pas une phrase dans une autre langue), et pas une prière."""
     w = fold(text).split()
-    french = sum(1 for x in w if x in FR_WORDS) / max(1, len(w))
-    return french >= 0.12 and not PRAYER.search(text)
+    fr = sum(1 for x in w if x in FR_WORDS)
+    en = sum(1 for x in w if x in EN_WORDS)
+    return not (en >= 2 and en > fr) and not PRAYER.search(text)
 
 
 def is_subject(s: str, first: str) -> bool:
